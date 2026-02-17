@@ -9,7 +9,7 @@ def _to_jsonable(x):
         return x
     
 class StanDataset:
-    def save_for_stan(obs_data,output_dir:str):
+    def save_for_stan(obs_data,output_dir:str,df:float):
         output_path=Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         manifest=[]
@@ -17,7 +17,6 @@ class StanDataset:
             mu = _to_jsonable(obs_data[i]['mu'])
             dataset = _to_jsonable(obs_data[i]['obs_data'])
             id = obs_data[i]['id']
-            df = obs_data[i]['df']
             npe_post_samples = _to_jsonable(obs_data[i]['npe_post_samples'])
             npe_log_marginal = _to_jsonable(obs_data[i]['npe_log_marginal'])
             stan_data={

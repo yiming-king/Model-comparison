@@ -4,7 +4,6 @@ from benchmark.examples.gaussian.approximators.estimation import MarginalLikelih
 
 class Calculation:
     def __init__(self,workflow,mu_prior_mean: float, mu_prior_std: float,
-                 obs_mu_prior_mean: float, obs_mu_prior_std: float,
                  num_dims:int,num_obs:int,
                  likelihood_std:float,num_samples:int,
                  df: float | None = None, use_student_t: bool = False, rng=None):
@@ -12,8 +11,6 @@ class Calculation:
         self.workflow = workflow
         self.mu_prior_mean = mu_prior_mean
         self.mu_prior_std = mu_prior_std
-        self.obs_mu_prior_mean = obs_mu_prior_mean
-        self.obs_mu_prior_std = obs_mu_prior_std
         self.num_dims = num_dims
         self.num_obs = num_obs
         self.likelihood_std = likelihood_std
@@ -26,9 +23,9 @@ class Calculation:
         for i in range(len(obs_data)):
             dataset=obs_data[i]["obs_data"]
             analytical=GA(obs_data=dataset,
-                                obs_mu_prior_mean=self.obs_mu_prior_mean,
-                                obs_mu_prior_std=self.obs_mu_prior_std,
                                 num_dims=self.num_dims,
+                                mu_prior_mean=self.mu_prior_mean,
+                                mu_prior_std=self.mu_prior_std,
                                 num_obs=self.num_obs,
                                 likelihood_std=self.likelihood_std,
                                 num_samples=1000,
