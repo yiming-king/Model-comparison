@@ -21,7 +21,7 @@ class Comparison:
             dictionary[dataset_id][f"npe_lm_{model_name}"]=d["npe_log_marginal"]
         return dictionary
     
-    def BF_calculator_M1(dict):
+    def BF_calculator(dict):
         dict=pd.DataFrame(dict.values())
         dict["logBF_12_gold"]=dict["gold_lm_M1"] - dict["gold_lm_M2"]
         dict["logBF_13_gold"]=dict["gold_lm_M1"] - dict["gold_lm_M3"]
@@ -30,28 +30,6 @@ class Comparison:
         dict["logBF_12_npe"]=dict["npe_lm_M1"] - dict["npe_lm_M2"]
         dict["logBF_13_npe"]=dict["npe_lm_M1"] - dict["npe_lm_M3"]
         dict["logBF_23_npe"]=dict["npe_lm_M2"] - dict["npe_lm_M3"]
-        return dict
-    
-    def BF_calculator_M2(dict):
-        dict=pd.DataFrame(dict.values())
-        dict["logBF_21_gold"]=dict["gold_lm_M2"] - dict["gold_lm_M1"]
-        dict["logBF_23_gold"]=dict["gold_lm_M2"] - dict["gold_lm_M3"]
-        dict["logBF_13_gold"]=dict["gold_lm_M1"] - dict["gold_lm_M3"]
-
-        dict["logBF_21_npe"]=dict["npe_lm_M2"] - dict["npe_lm_M1"]
-        dict["logBF_23_npe"]=dict["npe_lm_M2"] - dict["npe_lm_M3"]
-        dict["logBF_13_npe"]=dict["npe_lm_M1"] - dict["npe_lm_M3"]
-        return dict
-    
-    def BF_calculator_M3(dict):
-        dict=pd.DataFrame(dict.values())
-        dict["logBF_31_gold"]=dict["gold_lm_M3"] - dict["gold_lm_M1"]
-        dict["logBF_32_gold"]=dict["gold_lm_M3"] - dict["gold_lm_M2"]
-        dict["logBF_12_gold"]=dict["gold_lm_M1"] - dict["gold_lm_M2"]
-
-        dict["logBF_31_npe"]=dict["npe_lm_M3"] - dict["npe_lm_M1"]
-        dict["logBF_32_npe"]=dict["npe_lm_M3"] - dict["npe_lm_M2"]
-        dict["logBF_12_npe"]=dict["npe_lm_M1"] - dict["npe_lm_M2"]
         return dict
     
     def prob_calculator(dict):

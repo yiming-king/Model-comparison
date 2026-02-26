@@ -38,11 +38,10 @@ class BayesFLowNPE:
                                           standardize=None
                                           )
         self.workflow.approximator.compile(optimizer=keras.optimizers.Adam(learning_rate=5e-4))
-    def train(self,epochs:int,batch_size:int,num_batches_per_epoch:int,learning_rate=5e-4):
+    def train(self,epochs:int,batch_size:int,num_batches_per_epoch:int):
         history = self.workflow.fit_online(
             epochs=epochs,
             batch_size=batch_size,
-            learning_rate=learning_rate,
             num_batches_per_epoch=num_batches_per_epoch,
         )
         return history

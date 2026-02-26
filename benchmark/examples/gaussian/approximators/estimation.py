@@ -10,7 +10,7 @@ class MarginalLikelihoodEstimator:
     def __init__(self,workflow,mu:np.ndarray,obs_data:np.ndarray,mu_prior_mean:float,mu_prior_std:float,
                  num_dims:int,num_obs:int,likelihood_std:float,
                  df: float | None = None, use_student_t: bool = False,rng=None):
-   
+        """mu is the estimated posterior samples"""
         self.workflow=workflow
         self.mu=mu
         self.obs_data=obs_data

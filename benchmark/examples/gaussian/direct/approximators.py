@@ -3,25 +3,24 @@ import keras
 import bayesflow as bf
 
 class DirectBayesFLowNPE:
-    def __init__(self, simulator,num_batches_per_epoch:int,batch_size:int,epochs:int, summary_config=None, inference_config=None):
+    def __init__(self, simulator,num_batches_per_epoch:int,batch_size:int,epochs:int, 
+                 summary_config=None, classifier_config=None,eps: float=1e-12):
         self.simulator = simulator
         
         self.summary_config = summary_config or {
-            'summary_dim': 30,
+            'summary_dim':15,
             'activation': 'relu',
+            'dropout':None,
             }
-
-        self.inference_config = inference_config or {
-            'depth': 5,
-            'transform':  'spline', # can be 'affine'
-            'subnet_kwargs': {
-                'widths': (128, 128),
-                'activation': 'relu',
+        self.classifier_config = classifier_config or {
+            'widths': [64]*4,
+            'activation': 'silu',
+            'dropout': None,
             }
-        }
         self.num_batches_per_epoch=num_batches_per_epoch
         self.batch_size=batch_size
         self.epochs=epochs
+        self.eps=eps
         self._build_workflow()
         
     def _build_workflow(self):
@@ -33,7 +32,7 @@ class DirectBayesFLowNPE:
                 )
         # networks
         self.summary_network = bf.networks.DeepSet(**self.summary_config)
-        self.classifier_network = bf.networks.MLP(**self.inference_config)
+        self.classifier_network = bf.networks.MLP(**self.classifier_config)
         self.workflow = bf.approximators.ModelComparisonApproximator(
             num_models=3,
             classifier_network=self.classifier_network,
@@ -53,40 +52,26 @@ class DirectBayesFLowNPE:
             simulator=self.simulator,
             epochs=self.epochs,
             batch_size=self.batch_size,
-            learning_rate=self.learning_rate,
             num_batches=self.num_batches_per_epoch,
             adapter=self.adapter,
         )
         return history
     
-    def get_probs_M1(self,obs_data,approximator):
+    def get_probs(self,obs_data,approximator):
         for i in range(len(obs_data)):
             df=obs_data[i]["obs_data"]
             pred_model=approximator.predict(conditions={'x':df[None,...]},probs=True)
-            obs_data[i]["pred_model"]=pred_model
-            obs_data[i]["logBF_12_direct"]=np.log(pred_model[0][0]/pred_model[0][1])
-            obs_data[i]["logBF_13_direct"]=np.log(pred_model[0][0]/pred_model[0][2])
-            obs_data[i]["logBF_23_direct"]=np.log(pred_model[0][1]/pred_model[0][2])
-        return obs_data
-    
-    def get_probs_M2(self,obs_data,approximator):
-        for i in range(len(obs_data)):
-            df=obs_data[i]["obs_data"]
-            pred_model=approximator.predict(conditions={'x':df[None,...]},probs=True)
-            obs_data[i]["pred_model"]=pred_model
-            obs_data[i]["logBF_21_direct"]=np.log(pred_model[0][1]/pred_model[0][0])
-            obs_data[i]["logBF_23_direct"]=np.log(pred_model[0][1]/pred_model[0][2])
-            obs_data[i]["logBF_13_direct"]=np.log(pred_model[0][0]/pred_model[0][2])
-        return obs_data
-    
-    def get_probs_M3(self,obs_data,approximator):
-        for i in range(len(obs_data)):
-            df=obs_data[i]["obs_data"]
-            pred_model=approximator.predict(conditions={'x':df[None,...]},probs=True)
-            obs_data[i]["pred_model"]=pred_model
-            obs_data[i]["logBF_31_direct"]=np.log(pred_model[0][2]/pred_model[0][0])
-            obs_data[i]["logBF_32_direct"]=np.log(pred_model[0][2]/pred_model[0][1])
-            obs_data[i]["logBF_12_direct"]=np.log(pred_model[0][0]/pred_model[0][1])
+            p = np.asarray(pred_model, dtype=float).squeeze(0)
+            if not np.all(np.isfinite(p)):
+                raise ValueError(f"Non-finite probs at i={i}: {p}")
+            p = np.clip(p, self.eps, 1.0)
+            p = p / p.sum()
+            obs_data[i]["pred_model"]=p
+            logp=np.log(p)
+            
+            obs_data[i]["logBF_12_direct"]=float(logp[0] - logp[1])
+            obs_data[i]["logBF_13_direct"]=float(logp[0] - logp[1])
+            obs_data[i]["logBF_23_direct"]=float(logp[0] - logp[1])
         return obs_data
 
     

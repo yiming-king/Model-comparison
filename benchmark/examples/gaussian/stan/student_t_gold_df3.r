@@ -28,7 +28,6 @@ for (data_file in data_files) {
   y_list <- lapply(obj$obs_data, as.numeric)
   N<-length(y_list)
   D<-length(y_list[[1]])
-  df<-as.numeric(obj$df)
   y_mat <- do.call(rbind, y_list)
   mu_prior_mean <- 0.0
   mu_prior_std <- 1.0
@@ -42,7 +41,7 @@ for (data_file in data_files) {
     mu_prior_mean=mu_prior_mean,
     mu_prior_std=mu_prior_std,
     likelihood_std=likelihood_std,
-    df=df
+    df=3
   )
 
     stan_fit <- rstan::sampling(
