@@ -25,3 +25,7 @@ node_modules/
 dist/
 build/
 
+# stan
+student_t_gold_df3_n0.r
+student_t_gold_df3_n10.r
+student_t_gold_df3.r
