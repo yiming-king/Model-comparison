@@ -1,9 +1,9 @@
-json_df10/
 json_df3/
-json_n10/
-json_n0/
-stan_output_df10/
-stan_output_n0/
-stan_output_n10/
 *.rds/
 stan_output_df3/
+stan_output_df3_n0/
+stan_output_df3_n10/
+
+student_t_gold_df3_n0.r/
+student_t_gold_df3_n10.r/
+student_t_gold_df3.r/

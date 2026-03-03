@@ -33,7 +33,7 @@ class DirectBayesFLowNPE:
         # networks
         self.summary_network = bf.networks.DeepSet(**self.summary_config)
         self.classifier_network = bf.networks.MLP(**self.classifier_config)
-        self.workflow = bf.approximators.ModelComparisonApproximator(
+        self.approximator = bf.approximators.ModelComparisonApproximator(
             num_models=3,
             classifier_network=self.classifier_network,
             summary_network=self.summary_network,
@@ -45,10 +45,10 @@ class DirectBayesFLowNPE:
             initial_learning_rate=1e-4, 
             decay_steps=self.epochs * self.num_batches_per_epoch
             )
-        self.workflow.compile(optimizer=keras.optimizers.Adam(learning_rate=self.learning_rate))
+        self.approximator.compile(optimizer=keras.optimizers.Adam(learning_rate=self.learning_rate))
         
     def train(self):
-        history = self.workflow.fit(
+        history = self.approximator.fit(
             simulator=self.simulator,
             epochs=self.epochs,
             batch_size=self.batch_size,

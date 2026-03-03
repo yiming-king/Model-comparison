@@ -52,19 +52,19 @@ class Plot:
         axes[0].boxplot([d["err12_npe"], d["err12_dir"]],
                           labels=["NPE", "Direct"])
         axes[0].axhline(0)
-        axes[0].set_ylabel("Error in log BF12")
+        axes[0].set_ylabel("Δ log BF12")
         axes[0].grid(True, axis="y", alpha=0.3)
 
         axes[1].boxplot([d["err13_npe"], d["err13_dir"]],
                       labels=["NPE", "Direct"])
         axes[1].axhline(0)
-        axes[1].set_ylabel("Error in log BF13")
+        axes[1].set_ylabel("Δ log BF13")
         axes[1].grid(True, axis="y", alpha=0.3)
         
         axes[2].boxplot([d["err23_npe"], d["err23_dir"]],
                       labels=["NPE", "Direct"])
         axes[2].axhline(0)
-        axes[2].set_ylabel("Error in log BF23")
+        axes[2].set_ylabel("Δ log BF23")
         axes[2].grid(True, axis="y", alpha=0.3)
         
         fig.suptitle(title)
