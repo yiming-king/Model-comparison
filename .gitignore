@@ -1,31 +1,41 @@
+# macOS
 .DS_Store
 AppleDouble
 .LSOverride
 
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
+# virtual environments
 venv/
 env/
 ENV/
-.venv
+.venv/
 
+# editors
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.ipynb_checkpoints/
 
+# env / logs
 .env
 *.log
+
+# JS / build
 node_modules/
 dist/
 build/
 
-# stan
-student_t_gold_df3_n0.r
-student_t_gold_df3_n10.r
-student_t_gold_df3.r
+# local tooling / workspace junk
+anaconda_projects/
+

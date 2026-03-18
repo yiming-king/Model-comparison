@@ -15,17 +15,13 @@ class StanDataset:
         manifest=[]
         for i in range(len(obs_data)):
             mu = _to_jsonable(obs_data[i]['mu'])
-            dataset = _to_jsonable(obs_data[i]['obs_data'])
+            dataset = _to_jsonable(obs_data[i]['x'])
             id = obs_data[i]['id']
-            npe_post_samples = _to_jsonable(obs_data[i]['npe_post_samples'])
-            npe_log_marginal = _to_jsonable(obs_data[i]['npe_log_marginal'])
             stan_data={
                 'mu':mu,
-                'obs_data':dataset,
+                'x':dataset,
                 'id':id,
                 'df':df,
-                'npe_post_samples':npe_post_samples,
-                'npe_log_marginal':npe_log_marginal
             }
             filename=f"Student_{id}.json"
             filepath = output_path / filename
@@ -41,7 +37,15 @@ class StanDataset:
         for fp in dir_path.glob("*.json"):
             with open(fp, "r") as f:
                 obj = json.load(f)
-            datasets.append(obj)
+            dataset = {
+                "mu": np.asarray(obj["mu"], dtype=float),
+                "x": np.asarray(obj["x"], dtype=float),
+                "id": int(obj["id"]),
+                "df":float(obj["df"]),
+                "gold_post_samples_m3":np.asarray(obj["gold_post_samples_m3"], dtype=float),
+                "gold_log_marginal_m3":float(obj["gold_log_marginal_m3"]),
+                }
+            datasets.append(dataset)
         datasets.sort(key=lambda d: d["id"])
         return datasets
 
