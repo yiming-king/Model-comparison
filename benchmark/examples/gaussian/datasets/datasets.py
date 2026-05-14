@@ -26,7 +26,7 @@ class GetDatasets:
         datasets=[]
         for i in range(self.num_datasets):
             mu = self.rng.normal(loc=self.obs_mu_prior_mean, scale=self.obs_mu_prior_std, size=self.num_dims)
-            scale = self.obs_likelihood_std * np.sqrt((df - 2) / df)
+            scale = self.obs_likelihood_std
             x = self.rng.standard_t(df=df, size=(self.num_obs, self.num_dims)) * scale + mu
             datasets.append({
                 "mu": mu,

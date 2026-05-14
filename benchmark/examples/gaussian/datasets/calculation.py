@@ -59,8 +59,8 @@ class Calculation:
     def npe_estimation_use_gold_posterior(self,obs_data):
         for i in range(len(obs_data)):
             dataset=obs_data[i]["x"]
-            npe_post_samples = obs_data[i][f"gold_post_samples_{self.model}"]
-            estimator=MLE(approximator=self.approximator,mu=npe_post_samples,obs_data=dataset,
+            post_samples = obs_data[i][f"gold_post_samples_{self.model}"]
+            estimator=MLE(approximator=self.approximator,mu=post_samples,obs_data=dataset,
                                         mu_prior_mean=self.mu_prior_mean,mu_prior_std=self.mu_prior_std,
                                         num_dims=self.num_dims,
                                         likelihood_std=self.likelihood_std,df=self.df,

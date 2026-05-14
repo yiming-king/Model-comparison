@@ -10,7 +10,7 @@ data {
 
 transformed data {
   real<lower=0> likelihood_scale;
-  likelihood_scale = likelihood_std * sqrt((df - 2.0) / df);
+  likelihood_scale = likelihood_std;
 }
 
 parameters {

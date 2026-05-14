@@ -6,12 +6,12 @@ library(RcppCNPy)
 rstan:: rstan_options(auto_write = TRUE)
 options(mc.cores = parallel::detectCores())
 
-path <- "/Users/mandyking/benchmark/benchmark/examples/gaussian/stan"
-data_path <-"/Users/mandyking/benchmark/benchmark/examples/gaussian/stan/json_m1"
-output_path <- "/Users/mandyking/benchmark/benchmark/examples/gaussian/stan/stan_output_m1"
+path <- "/Users/yimingzang/Documents/thesis/benchmark2/benchmark/examples/gaussian/stan"
+data_path <-"/Users/yimingzang/Documents/thesis/benchmark2/benchmark/examples/gaussian/stan/json_m1"
+output_path <- "/Users/yimingzang/Documents/thesis/benchmark2/benchmark/examples/gaussian/stan/stan_output_m1"
 
 dir.create(output_path, recursive = TRUE, showWarnings = FALSE)
-stan_model <- rstan:: stan_model("/Users/mandyking/benchmark/benchmark/examples/gaussian/stan/student_t.stan")
+stan_model <- rstan:: stan_model("/Users/yimingzang/Documents/thesis/benchmark2/benchmark/examples/gaussian/stan/student_t.stan")
 
 data_files <- list.files(data_path, pattern = "*.json", full.names = FALSE)
 cat("Found", length(data_files), "data files\n\n")

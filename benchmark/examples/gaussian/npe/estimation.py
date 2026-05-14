@@ -44,7 +44,7 @@ class MarginalLikelihoodEstimator:
                 diff,
                 df=self.df,
                 loc=0.0,
-                scale = self.likelihood_std * np.sqrt((self.df - 2) / self.df)
+                scale = self.likelihood_std
             )
             return np.sum(logpdf, axis=(1, 2))
         else:
