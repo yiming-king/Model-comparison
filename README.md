@@ -1,6 +1,6 @@
 # benchmark
 
-A research repository for posterior-approximation and model-comparison experiments on a 3-model Gaussian / Student-t toy family.
+A research repository for posterior-approximation and model-comparison experiments on a 3-model Gaussian / Student-t toy family for different approaches: NPE and NPMP.
 
 ## Core terminology
 
@@ -14,8 +14,10 @@ This distinction is essential for interpreting the files and result fields in th
 ## Model definitions
 
 - **M1**: Normal prior mean `0`, Normal likelihood
-- **M2**: Normal prior mean `10`, Normal likelihood
-- **M3**: Normal prior mean `0`, Student-t likelihood
+- **M2**: Normal prior mean `0.5`, Normal likelihood
+- **M3**: Normal prior mean `0`, Student-t likelihood with df=5
+
+- **M4**: Normal prior mean `2`, Student-t likelihood with df=5 which will only be used as observation dataset to form a open world situation.
 
 ## Gold references used in this repo
 
@@ -37,14 +39,14 @@ Important interpretation of the current naming:
   Train the NPE model under assumed model M2.
 - `benchmark/examples/gaussian/notebooks/m3.ipynb`
   Train the NPE model under assumed model M3.
-- `benchmark/examples/gaussian/notebooks/direct_comparison.ipynb`
-  Train the direct model-comparison classifier.
+- `benchmark/examples/gaussian/notebooks/direct.ipynb`
+  Train the NPMP model-comparison classifier.
 - `benchmark/examples/gaussian/notebooks/calculation.ipynb`
-  Generate observation datasets, merge gold references, NPE outputs, and direct-model outputs.
+  Generate observation datasets, merge gold references, NPE outputs, and NPMP outputs.
 - `benchmark/examples/gaussian/notebooks/comparison.ipynb`
   Compare posterior diagnostics and log-marginal errors.
 - `benchmark/examples/gaussian/notebooks/plot.ipynb`
-  Produce final figures from saved datasets.
+  Produce distributions figures from saved datasets.
 - `benchmark/examples/gaussian/stan/student_t.stan`
   Stan model used for the M3 gold reference.
 - `benchmark/examples/gaussian/stan/student_t_gold_m1.r`
@@ -53,6 +55,8 @@ Important interpretation of the current naming:
   Run Stan for observations generated from source model M2, under assumed model M3.
 - `benchmark/examples/gaussian/stan/student_t_gold_m3.r`
   Run Stan for observations generated from source model M3, under assumed model M3.
+- `benchmark/examples/gaussian/stan/student_t_gold_m4.r`
+  Run Stan for observations generated from source model M4, under assumed model M3.
 
 ## Python requirements
 
