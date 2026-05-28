@@ -49,7 +49,7 @@ for (data_file in data_files) {
       stan_model,
       data = stan_data,
       chains = 4,
-      iter = 4000,
+      iter = 8000,
       warmup = 2000,
       thin = 1,
       seed = 2025,
@@ -64,9 +64,9 @@ for (data_file in data_files) {
     mu_posterior <- posterior$mu
     S<-nrow(mu_posterior)
     set.seed(2026)
-    idx<-sample.int(S,size=1000,replace=(S<1000))
-    mu_1000<-mu_posterior[idx, ,drop=FALSE]
-    obj$gold_post_samples_m3<-unname(split(mu_1000, row(mu_1000)))
+    idx<-sample.int(S,size=2000,replace=(S<2000))
+    mu_2000<-mu_posterior[idx, ,drop=FALSE]
+    obj$gold_post_samples_m3<-unname(split(mu_2000, row(mu_2000)))
   
     bridge_result <- bridgesampling:: bridge_sampler(
       stan_fit,

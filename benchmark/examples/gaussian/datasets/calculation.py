@@ -63,7 +63,8 @@ class Calculation:
             estimator=MLE(approximator=self.approximator,mu=post_samples,obs_data=dataset,
                                         mu_prior_mean=self.mu_prior_mean,mu_prior_std=self.mu_prior_std,
                                         num_dims=self.num_dims,
-                                        likelihood_std=self.likelihood_std,df=self.df,
+                                        likelihood_std=self.likelihood_std,
+                                        df=self.df,
                                         use_student_t=self.use_student_t,
                                         rng=self.rng)
             npe_log_marginal_gp=estimator.log_marginal_npe()

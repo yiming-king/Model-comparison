@@ -254,7 +254,7 @@ def plot_triptych_box(
     ylim: tuple[float, float] | None = None,
 ) -> None:
     """Plot a three-panel boxplot for all assumed models."""
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4.8), sharey=True, gridspec_kw={"wspace": 0.05})
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5.2), sharey=True, gridspec_kw={"wspace": 0.05})
     for ax, assumed in zip(axes, assumed_models, strict=False):
         values = [df.loc[(df["assumed_model"] == assumed) & (df["source_model"] == source), value_col].to_numpy() for source in sources]
         ax.boxplot(values, showmeans=True)
@@ -289,7 +289,7 @@ def plot_logml_comparison(data_dir: str | Path = dataset_dir, sources=source_mod
     df = collect_logml_comparison(data_dir, sources)
     methods = list(dict.fromkeys(df["method"]))
     colors = {"npe": "#8ecae6", "gold_posterior": "#ffb703"}
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4.8), sharey=True, gridspec_kw={"wspace": 0.05})
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.8), sharey=True, sharex=True, gridspec_kw={"wspace": 0.05})
     for ax, assumed in zip(axes, assumed_models, strict=False):
         centers = np.arange(len(sources)) * 2.4
         for i, method in enumerate(methods):
@@ -313,6 +313,47 @@ def plot_logml_comparison(data_dir: str | Path = dataset_dir, sources=source_mod
     fig.tight_layout()
     plt.show()
     return df
+
+
+def plot_logml_comparison_scatter(source_model: str, data_dir: str | Path = dataset_dir) -> pd.DataFrame:
+    """Plot gold-vs-logml-estimate scatter for NPE samples and gold posterior samples."""
+    df = collect_logml_comparison(data_dir, (source_model,))
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.8), gridspec_kw={"wspace": 0.12},sharey=True, sharex=True)
+    global_lo = min(df["gold"].min(), df["estimate"].min())
+    global_hi = max(df["gold"].max(), df["estimate"].max())
+    global_pad = 0.05 * (global_hi - global_lo if global_hi > global_lo else 1.0)
+    for ax, assumed in zip(axes, assumed_models, strict=False):
+        sub = df[df["assumed_model"] == assumed]
+        npe = sub[sub["method"] == "npe"]
+        gold_posterior = sub[sub["method"] == "gold_posterior"]
+        ax.scatter(npe["gold"], npe["estimate"], s=70, alpha=0.78, color="#6FA4FF", edgecolor="#4477CC", linewidth=0.8)
+        ax.scatter(gold_posterior["gold"], gold_posterior["estimate"], s=150, alpha=0.78, marker="*", color="#FF8A7A", edgecolor="#D96A5C", linewidth=0.8)
+        ax.plot([global_lo - global_pad, global_hi + global_pad], [global_lo - global_pad, global_hi + global_pad], "--", color="black", linewidth=1.6, dashes=(4, 3))
+        ax.set_xlim(global_lo - global_pad, global_hi + global_pad)
+        ax.set_ylim(global_lo - global_pad, global_hi + global_pad)
+        ax.set_aspect("equal", adjustable="box")
+        ax.grid(alpha=0.28)
+        ax.set_title(rf"Assumed $M_{assumed[-1]}$", fontsize=18, pad=12)
+    axes[0].set_ylabel("Approximated log p(y)", fontsize=18, fontweight="bold")
+    fig.supxlabel("Gold", fontsize=18, y=0.04)
+    fig.suptitle(rf"Observation Datasets from $M_{source_model[-1]}$", fontsize=22, y=1.02)
+    fig.legend(handles=logml_comparison_legend(), loc="upper right", bbox_to_anchor=(0.98, 1.05), ncol=2, frameon=True, fontsize=15)
+    fig.tight_layout(rect=[0.02, 0.02, 0.98, 0.9])
+    plt.show()
+    return df
+
+
+def plot_all_logml_comparison_scatter(data_dir: str | Path = dataset_dir, sources=source_models) -> dict[str, pd.DataFrame]:
+    """Plot logml comparison scatter for all source models."""
+    return {source: plot_logml_comparison_scatter(source, data_dir) for source in sources}
+
+
+def logml_comparison_legend() -> list[Line2D]:
+    """Create NPE and gold posterior legend handles."""
+    return [
+        Line2D([0], [0], marker="o", linestyle="None", markersize=10, markerfacecolor="#6FA4FF", markeredgecolor="#4477CC", label="NPE", alpha=0.85),
+        Line2D([0], [0], marker="*", linestyle="None", markersize=14, markerfacecolor="#FF8A7A", markeredgecolor="#D96A5C", label="Gold posterior", alpha=0.85),
+    ]
 
 
 def plot_pmp(source_model: str, data_dir: str | Path = dataset_dir) -> pd.DataFrame:
@@ -347,17 +388,17 @@ def plot_logml_scatter(assumed_model: str, data_dir: str | Path = dataset_dir, s
     """Plot gold-vs-NPE logml diagonal scatter for one assumed model."""
     df = collect_logml(data_dir, sources)
     df = df[df["assumed_model"] == assumed_model]
-    fig, axes = plt.subplots(1, len(sources), figsize=(3.8 * len(sources), 4.5))
+    fig, axes = plt.subplots(1, len(sources), figsize=(3.8 * len(sources), 4.5),sharey=True,sharex=True, gridspec_kw={"wspace": 0.12})
+    global_lo = min(df["gold"].min(), df["npe"].min())
+    global_hi = max(df["gold"].max(), df["npe"].max())
+    global_pad = 0.05 * (global_hi - global_lo if global_hi > global_lo else 1.0)
     axes = np.atleast_1d(axes)
     for ax, source in zip(axes, sources, strict=False):
         sub = df[df["source_model"] == source]
-        lo = min(sub["gold"].min(), sub["npe"].min())
-        hi = max(sub["gold"].max(), sub["npe"].max())
-        pad = 0.05 * (hi - lo if hi > lo else 1.0)
         ax.scatter(sub["gold"], sub["npe"], s=70, alpha=0.82, color="#6FA4FF", edgecolor="#4477CC", linewidth=0.8)
-        ax.plot([lo - pad, hi + pad], [lo - pad, hi + pad], "--", color="black", linewidth=1.6, dashes=(4, 3))
-        ax.set_xlim(lo - pad, hi + pad)
-        ax.set_ylim(lo - pad, hi + pad)
+        ax.plot([global_lo - global_pad, global_hi + global_pad], [global_lo - global_pad, global_hi + global_pad], "--", color="black", linewidth=1.6, dashes=(4, 3))
+        ax.set_xlim(global_lo - global_pad, global_hi + global_pad)
+        ax.set_ylim(global_lo - global_pad, global_hi + global_pad)
         ax.set_aspect("equal", adjustable="box")
         ax.grid(alpha=0.28)
         ax.set_title(rf"Obs from $M_{source[-1]}$", fontsize=16)
@@ -377,19 +418,19 @@ def plot_all_logml_scatter(data_dir: str | Path = dataset_dir, sources=source_mo
 def plot_bayes_factor(source_model: str, data_dir: str | Path = dataset_dir) -> pd.DataFrame:
     """Plot gold-vs-approximate log Bayes factor scatter for one source model."""
     df = collect_bayes_factor(data_dir, (source_model,))
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4.8))
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.8),sharey=True, sharex=True, gridspec_kw={"wspace": 0.12})
+    global_lo = min(df["gold"].min(), df["estimate"].min())
+    global_hi = max(df["gold"].max(), df["estimate"].max())
+    global_pad = 0.05 * (global_hi - global_lo if global_hi > global_lo else 1.0)
     for ax, pair in zip(axes, bf_pairs, strict=False):
         sub = df[df["bf_pair"] == pair]
-        lo = min(sub["gold"].min(), sub["estimate"].min())
-        hi = max(sub["gold"].max(), sub["estimate"].max())
-        pad = 0.05 * (hi - lo if hi > lo else 1.0)
         npe = sub[sub["method"] == "npe"]
         direct = sub[sub["method"] == "direct"]
         ax.scatter(npe["gold"], npe["estimate"], s=70, alpha=0.78, color="#6FA4FF", edgecolor="#4477CC", linewidth=0.8)
         ax.scatter(direct["gold"], direct["estimate"], s=150, alpha=0.78, marker="*", color="#FF8A7A", edgecolor="#D96A5C", linewidth=0.8)
-        ax.plot([lo - pad, hi + pad], [lo - pad, hi + pad], "--", color="black", linewidth=1.6, dashes=(4, 3))
-        ax.set_xlim(lo - pad, hi + pad)
-        ax.set_ylim(lo - pad, hi + pad)
+        ax.plot([global_lo - global_pad, global_hi + global_pad], [global_lo - global_pad, global_hi + global_pad], "--", color="black", linewidth=1.6, dashes=(4, 3))
+        ax.set_xlim(global_lo - global_pad, global_hi + global_pad)
+        ax.set_ylim(global_lo - global_pad, global_hi + global_pad)
         ax.set_aspect("equal", adjustable="box")
         ax.grid(alpha=0.28)
         ax.set_title(rf"$\log BF_{{{pair}}}$", fontsize=18, pad=12)
