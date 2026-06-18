@@ -15,9 +15,9 @@ def direct_get_probs(obs_data,approximator):
         obs_data[i]["p_direct"]=p
         logp=np.log(p)
             
-        obs_data[i]["logBF_12_direct"]=float(logp[0] - logp[1])
-        obs_data[i]["logBF_13_direct"]=float(logp[0] - logp[2])
-        obs_data[i]["logBF_23_direct"]=float(logp[1] - logp[2])
+        # obs_data[i]["logBF_12_direct"]=float(logp[0] - logp[1])
+        # obs_data[i]["logBF_13_direct"]=float(logp[0] - logp[2])
+        # obs_data[i]["logBF_23_direct"]=float(logp[1] - logp[2])
     return obs_data
 
 def softmax_stable(logits: np.ndarray) -> np.ndarray:
@@ -26,31 +26,19 @@ def softmax_stable(logits: np.ndarray) -> np.ndarray:
     exp_logits = np.exp(logits)
     return exp_logits / np.sum(exp_logits)
 
-def indirect_get_probs(obs_data):
-    for i in range(len(obs_data)):
-        item = obs_data[i]
-        gold_logml = np.array([
-            item["gold_log_marginal_m1"],
-            item["gold_log_marginal_m2"],
-            item["gold_log_marginal_m3"],
-        ], dtype=float)
+def indirect_get_probs(obs_data, assumed_models):
+    for item in obs_data:
+        gold = np.array([item[f"gold_log_marginal_{m}"] for m in assumed_models], dtype=float)
+        npe = np.array([item[f"npe_log_marginal_{m}"] for m in assumed_models], dtype=float)
+        item["p_gold"] = softmax_stable(gold)
+        item["p_npe"] = softmax_stable(npe)
         
-        npe_logml = np.array([
-            item["npe_log_marginal_m1"],
-            item["npe_log_marginal_m2"],
-            item["npe_log_marginal_m3"],
-        ], dtype=float)
-        
-        item["logBF_12_gold"] = float(gold_logml[0] - gold_logml[1])
-        item["logBF_13_gold"] = float(gold_logml[0] - gold_logml[2])
-        item["logBF_23_gold"] = float(gold_logml[1] - gold_logml[2])
+        # item["logBF_12_gold"] = float(gold_logml[0] - gold_logml[1])
+        # item["logBF_13_gold"] = float(gold_logml[0] - gold_logml[2])
+        # item["logBF_23_gold"] = float(gold_logml[1] - gold_logml[2])
 
-        item["logBF_12_npe"] = float(npe_logml[0] - npe_logml[1])
-        item["logBF_13_npe"] = float(npe_logml[0] - npe_logml[2])
-        item["logBF_23_npe"] = float(npe_logml[1] - npe_logml[2])
+        # item["logBF_12_npe"] = float(npe_logml[0] - npe_logml[1])
+        # item["logBF_13_npe"] = float(npe_logml[0] - npe_logml[2])
+        # item["logBF_23_npe"] = float(npe_logml[1] - npe_logml[2])
         
-        p_gold = softmax_stable(gold_logml)
-        p_npe = softmax_stable(npe_logml)
-        item["p_gold"] = p_gold
-        item["p_npe"] = p_npe
     return obs_data
