@@ -11,7 +11,7 @@ from bayesflow.metrics import MaximumMeanDiscrepancy
 from matplotlib.lines import Line2D
 
 
-dataset_dir = Path("/Users/yimingzang/Documents/thesis/benchmark2/benchmark/examples/gaussian/results/datasets")
+dataset_dir = Path("/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/gaussian/results/datasets")
 assumed_models = ("m1", "m2", "m3")
 source_models = ("m1", "m2", "m3", "m4")
 bf_pairs = ("12", "13", "23")

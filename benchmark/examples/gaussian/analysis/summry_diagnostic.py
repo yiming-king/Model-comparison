@@ -17,7 +17,7 @@ from sklearn.covariance import LedoitWolf
 import benchmark.examples.gaussian.direct.calculator as BF
 
 
-RESULT_DIR = Path("/Users/yimingzang/Documents/thesis/benchmark2/benchmark/examples/gaussian/results/ood")
+RESULT_DIR = Path("/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/gaussian/results/ood")
 FIGURE_DIR = RESULT_DIR / "figures"
 MODEL_SPECS = {
     "m1": {"mu_prior_mean": 0.0, "mu_prior_std": 1.0, "likelihood_std": 1.0},
@@ -92,7 +92,8 @@ def fit_reference(
     }
 
     # Second independent batch: calibrate the reference-distance distribution.
-    S_calibration = summary_outputs(approximator, simulator.sample(n_ref)["x"])
+    x_calibration = simulator.sample(n_ref)["x"]
+    S_calibration = summary_outputs(approximator, x_calibration)
     calibration_distances = summary_distance_from_summary(
         S_calibration,
         reference["mu_hat"],
@@ -127,6 +128,8 @@ def bootstrap_reference_stats(
     samples = rng.choice(distances, size=(n_boot, len(distances)), replace=True)
     qs = np.percentile(samples, [50, 100 * alpha / 2, 100 * (1 - alpha / 2)], axis=1)
     return {"median": float(qs[0].mean()), "dm_low": float(qs[1].mean()), "dm_high": float(qs[2].mean())}
+
+
 
 
 def summary_distance_from_summary(
@@ -180,9 +183,16 @@ def compute_logml_and_posteriors(
     calculations: dict[str, object],
     sources: tuple[str, ...] = SOURCE_MODELS,
     assumed_models: tuple[str, ...] = ASSUMED_MODELS,
+    logml_method: str | None = None,
 ) -> dict[str, list[dict]]:
+    """Compute posterior samples and logmls, optionally overriding the aggregation method."""
+    if logml_method is not None and logml_method not in {"log_mean_exp", "mean_log"}:
+        raise ValueError("logml_method must be 'log_mean_exp' or 'mean_log'")
+
     for assumed in assumed_models:
         calculation = calculations[assumed]
+        if logml_method is not None:
+            calculation.logml_method = logml_method
         for source in sources:
             datasets[source] = calculation.normal_analytical(datasets[source])
             datasets[source] = calculation.npe_estimation(datasets[source])
@@ -200,6 +210,7 @@ def compute_model_probabilities(
         datasets[source] = BF.direct_get_probs(datasets[source], direct_approximator)
         datasets[source] = BF.indirect_get_probs(datasets[source], assumed_models)
     return datasets
+
 
 
 def fit_summary_references(
@@ -476,25 +487,29 @@ def _with_extrapolation_class(df: pd.DataFrame) -> pd.DataFrame:
 
 
 
+
 def plot_logml_error_vs_distance(
     logml_df: pd.DataFrame,
     color_by: str = "source",
     output_dir: str | Path | None = FIGURE_DIR,
     assumed_models: tuple[str, ...] = ASSUMED_MODELS,
-    x: str = "distance",
+    x: str = "rho",
     error_bound: float | None = None,
     x_min: float | None = None,
     filename: str | None = None,
 ):
     """Plot log marginal likelihood error vs distance, one panel per assumed model."""
-    if x not in {"distance", "log_distance", "logdistance"}:
-        raise ValueError("x must be 'distance' or 'log_distance'")
+    if x not in {"distance", "log_distance", "logdistance", "rho", "log_rho", "logrho"}:
+        raise ValueError("x must be 'distance', 'log_distance', 'rho', or 'log_rho'")
     if color_by not in {"source", "gold_logml", "npe_logml", "signed_logml_error"}:
         raise ValueError("color_by must be 'source', 'gold_logml', 'npe_logml', or 'signed_logml_error'")
 
-    use_log = x in {"log_distance", "logdistance"}
+    use_log_distance = x in {"log_distance", "logdistance"}
+    use_rho = x in {"rho", "log_rho", "logrho"}
+    use_log_rho = x in {"log_rho", "logrho"}
     x_col = "_x"
-    x_min = -0.5 if x_min is None and use_log else 0.0 if x_min is None else x_min
+    if x_min is None:
+        x_min = -0.5 if use_log_distance or use_log_rho else 0.0
 
     fig, axes = plt.subplots(1, len(assumed_models), figsize=(5.1 * len(assumed_models), 5.2), sharey=True)
     axes = np.atleast_1d(axes)
@@ -503,9 +518,17 @@ def plot_logml_error_vs_distance(
 
     for ax, assumed in zip(axes, assumed_models, strict=False):
         sub = logml_df[logml_df["assumed_model"] == assumed].copy()
-        sub[x_col] = _safe_log(sub["d_M"]) if use_log else sub["d_M"]
-        low = float(_safe_log(sub["dm_low"].iloc[0])) if use_log else float(sub["dm_low"].iloc[0])
-        high = float(_safe_log(sub["dm_high"].iloc[0])) if use_log else float(sub["dm_high"].iloc[0])
+        if use_rho:
+            rho = sub["d_M"] / sub["dm_high"]
+            sub[x_col] = _safe_log(rho) if use_log_rho else rho
+            low = float(_safe_log(sub["dm_low"].iloc[0] / sub["dm_high"].iloc[0])) if use_log_rho else float(sub["dm_low"].iloc[0] / sub["dm_high"].iloc[0])
+            high = 0.0 if use_log_rho else 1.0
+            x_label = rf"$\log \rho_{assumed[-1]}(y)$" if use_log_rho else rf"$\rho_{assumed[-1]}(y)$"
+        else:
+            sub[x_col] = _safe_log(sub["d_M"]) if use_log_distance else sub["d_M"]
+            low = float(_safe_log(sub["dm_low"].iloc[0])) if use_log_distance else float(sub["dm_low"].iloc[0])
+            high = float(_safe_log(sub["dm_high"].iloc[0])) if use_log_distance else float(sub["dm_high"].iloc[0])
+            x_label = r"$\log d_j(y)$" if use_log_distance else r"$d_j(y)$"
         x_max = max(float(sub[x_col].max()) * 1.05, high * 1.1)
 
         _add_distance_regions(ax, low, high, x_max, x_min=x_min)
@@ -539,24 +562,36 @@ def plot_logml_error_vs_distance(
         ax.axhline(0, color="0.35", linewidth=0.8)
         ax.set_xlim(x_min, x_max)
         ax.set_title(rf"Assumed {assumed.upper()}")
-        ax.set_xlabel(r"$\log d_j(y)$" if use_log else r"$d_j(y)$")
+        ax.set_xlabel(x_label)
         ax.grid(alpha=0.18)
 
     axes[0].set_ylabel(r"$\widehat{\log p}(y\mid M_j)-\log p(y\mid M_j)$")
     _style_axes(axes)
+    for ax in axes:
+        offset = ax.yaxis.get_offset_text()
+        offset.set_fontsize(PLOT_FONT["tick"])
+        offset.set_fontweight("bold")
     if color_by == "source":
-        _source_legend(fig, y=-0.10)
+        _source_legend(fig, y=-0.035)
     elif last is not None:
         cbar = fig.colorbar(last, ax=axes.ravel().tolist(), fraction=0.025, pad=0.02)
         cbar.set_label(color_by)
         _style_colorbar(cbar)
 
-    fig.tight_layout(rect=(0, 0.12 if color_by == "source" else 0, 1, 1))
+    fig.tight_layout(rect=(0, 0.065 if color_by == "source" else 0, 1, 1))
     if output_dir is not None:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
-        default_name = "logml_error_vs_distance_by_assumed.png" if not use_log else "logml_error_vs_log_distance_by_assumed.png"
-        fig.savefig(Path(output_dir) / (filename or default_name), dpi=200, bbox_inches="tight")
+        suffix = {
+            "distance": "distance",
+            "log_distance": "log_distance",
+            "logdistance": "log_distance",
+            "rho": "rho",
+            "log_rho": "log_rho",
+            "logrho": "log_rho",
+        }[x]
+        fig.savefig(Path(output_dir) / (filename or f"logml_error_vs_{suffix}_by_assumed.png"), dpi=200, bbox_inches="tight")
     return fig, axes
+
 
 def plot_signed_logml_error_grid(
     logml_df: pd.DataFrame,
@@ -601,7 +636,7 @@ def plot_signed_logml_error_grid(
         ax.xaxis.label.set_size(18)
         ax.yaxis.label.set_size(18)
         ax.tick_params(labelsize=18)
-    fig.supylabel(r"$\hat{p}(y\mid M_j)-p(y\mid M_j)$", fontsize=18)
+    fig.supylabel(r"$\log \widehat{p}(y\mid M_j)-\log p(y\mid M_j)$", fontsize=18)
     fig.supxlabel(r"$\log d_j(y)$" if use_log else r"$d_j(y)$", fontsize=18)
     fig.tight_layout(rect=(0.015, 0.025, 1, 1))
     if output_dir is not None:
@@ -836,6 +871,8 @@ def _assumed_region_bounds(sub: pd.DataFrame, x: str) -> tuple[float, float]:
     return low, high
 
 
+
+
 def _scatter_pmp(ax, data: pd.DataFrame, x_col: str, y_col: str, group_by: str):
     if group_by == "source_model":
         color_map = dict(zip(SOURCE_MODELS, SOURCE_COLORS, strict=False))
@@ -867,6 +904,7 @@ def _scatter_pmp(ax, data: pd.DataFrame, x_col: str, y_col: str, group_by: str):
             continue
         last = ax.scatter(group[x_col], group[y_col], c=group["gold"], cmap="viridis", vmin=0, vmax=1, s=size, alpha=0.72, marker=marker, edgecolors="black", linewidths=0.55)
     return last
+
 
 
 def plot_pmp_diagnostic(
@@ -926,16 +964,17 @@ def plot_pmp_diagnostic(
 
     for ax, (model, sub, x_col, x_label, x_max) in zip(axes, plot_data, strict=False):
         plot_x_max = shared_x_max if sharex else x_max
-        if regions == "assumed": # regions based on the assumed model in each subplot
+        if regions == "assumed":
             low, high = _assumed_region_bounds(sub, x)
             _add_distance_regions(ax, low, high, plot_x_max, x_min=x_min)
             ax.set_xlim(x_min, plot_x_max)
-        if regions == "nearest": # d_min regions based on the nearest assumed model for each point, same across subplots
+        elif regions == "nearest":
             low, high, _ = _nearest_distance_region(pmp_df)
             if x == "log_d_min":
                 low, high = float(_safe_log(low)), float(_safe_log(high))
             _add_distance_regions(ax, low, high, plot_x_max, x_min=x_min)
             ax.set_xlim(x_min, plot_x_max)
+
         last = _scatter_pmp(ax, sub, x_col, y_col, group_by) or last
         _add_first_large_error(ax, _error_subset_data(sub, error_subset), x_col, y_col, error_bound)
         if y == "signed_error":
@@ -965,7 +1004,6 @@ def plot_pmp_diagnostic(
         _marker_legend(fig, {False: ("o", 32), True: ("D", 48)})
     elif group_by == "nearest_two":
         _marker_legend(fig, NEAREST_TWO_CLASS_MARKERS)
-        _source_legend(fig, y=-0.15)
     if last is not None:
         _style_colorbar(fig.colorbar(last, ax=axes, label="gold PMP", fraction=0.025, pad=0.02))
     if output_dir is not None and filename:

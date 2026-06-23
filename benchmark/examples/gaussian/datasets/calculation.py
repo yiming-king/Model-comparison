@@ -6,7 +6,8 @@ class Calculation:
     def __init__(self,approximator,mu_prior_mean: float, mu_prior_std: float,
                  num_dims:int,num_obs:int,
                  likelihood_std:float,num_samples:int,assumed_model:str,
-                 df: float | None = None, use_student_t: bool = False, rng=None):
+                 df: float | None = None, use_student_t: bool = False, rng=None,
+                 logml_method: str = "log_mean_exp"):
         
         self.approximator = approximator
         self.mu_prior_mean = mu_prior_mean
@@ -19,6 +20,7 @@ class Calculation:
         self.df=df
         self.use_student_t=use_student_t
         self.rng = rng if rng is not None else np.random.default_rng()
+        self.logml_method = logml_method
         
     def normal_analytical(self,obs_data):
         for i in range(len(obs_data)):
@@ -51,7 +53,7 @@ class Calculation:
                                         likelihood_std=self.likelihood_std,df=self.df,
                                         use_student_t=self.use_student_t,
                                         rng=self.rng)
-            npe_log_marginal=estimator.log_marginal_npe()
+            npe_log_marginal=estimator.log_marginal_npe(method=self.logml_method)
             obs_data[i][f"npe_post_samples_{self.model}"]=npe_post_samples
             obs_data[i][f"npe_log_marginal_{self.model}"]=npe_log_marginal
         return obs_data
@@ -67,7 +69,7 @@ class Calculation:
                                         df=self.df,
                                         use_student_t=self.use_student_t,
                                         rng=self.rng)
-            npe_log_marginal_gp=estimator.log_marginal_npe()
+            npe_log_marginal_gp=estimator.log_marginal_npe(method=self.logml_method)
             obs_data[i][f"npe_log_marginal_gp_{self.model}"]=npe_log_marginal_gp
         return obs_data
             

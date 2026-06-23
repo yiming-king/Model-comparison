@@ -64,11 +64,13 @@ class MarginalLikelihoodEstimator:
         log_probs = np.asarray(log_probs)
         return log_probs.reshape(-1)
     
-    def log_marginal_npe(self):
-        log_prior=self.log_prior_mu()  
-        log_likelihood=self.log_likelihood_x_given_mu()  
-        log_q_phi=self.log_q_phi() 
-        log_terms=log_prior+log_likelihood-log_q_phi
-        log_marginal=logmeanexp(log_terms)
-        return log_marginal
+    def log_marginal_npe(self, method: str = "log_mean_exp") -> float:
+        """Estimate log marginal likelihood by aggregating posterior log-weights."""
+        log_terms = self.log_prior_mu() + self.log_likelihood_x_given_mu() - self.log_q_phi()
+
+        if method == "log_mean_exp":
+            return float(logmeanexp(log_terms))
+        if method == "mean_log":
+            return float(np.mean(log_terms))
+        raise ValueError("method must be 'log_mean_exp' or 'mean_log'")
     
