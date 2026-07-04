@@ -871,6 +871,44 @@ def _assumed_region_bounds(sub: pd.DataFrame, x: str) -> tuple[float, float]:
     return low, high
 
 
+def _signed_max_error_within_rho(
+    data: pd.DataFrame,
+    y_col: str,
+    rho_col: str = "rho_M",
+    rho_max: float = 1.0,
+) -> float | None:
+    if rho_col not in data or y_col not in data:
+        return None
+    subset = data.loc[data[rho_col].le(rho_max), [rho_col, y_col]].dropna()
+    if subset.empty:
+        return None
+    return float(subset.loc[subset[y_col].abs().idxmax(), y_col])
+
+
+def _add_rho_max_error_line(
+    ax,
+    data: pd.DataFrame,
+    y_col: str,
+    rho_max: float = 1.0,
+) -> None:
+    y0 = _signed_max_error_within_rho(data, y_col=y_col, rho_max=rho_max)
+    if y0 is None:
+        return
+    ax.axhline(y0, color="#882255", linestyle="--", linewidth=1.1)
+    va = "bottom" if y0 >= 0 else "top"
+    ax.text(
+        0.98,
+        y0,
+        f"{y0:.2g}",
+        transform=ax.get_yaxis_transform(),
+        ha="right",
+        va=va,
+        fontsize=11,
+        color="#882255",
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.65, "pad": 1.0},
+    )
+
+
 
 
 def _scatter_pmp(ax, data: pd.DataFrame, x_col: str, y_col: str, group_by: str):
@@ -921,6 +959,7 @@ def plot_pmp_diagnostic(
     error_bound: float | None = None,
     error_subset: str | None = None,
     x_min: float = -0.5,
+    show_rho_leq_one_max_error: bool = True,
 ):
     data, by_model = _pmp_plot_data(pmp_df, y, estimate)
     y_col = "signed_error" if y == "signed_error" else "pmp_rmse"
@@ -979,6 +1018,8 @@ def plot_pmp_diagnostic(
         _add_first_large_error(ax, _error_subset_data(sub, error_subset), x_col, y_col, error_bound)
         if y == "signed_error":
             ax.axhline(0, color="0.35", linewidth=0.8)
+            if by_model and show_rho_leq_one_max_error:
+                _add_rho_max_error_line(ax, sub, y_col)
         ax.set_title(rf"$p(M_{model[-1]}\mid y)$" if by_model else title or "")
         ax.set_xlabel(x_label)
         ax.grid(alpha=0.2)
