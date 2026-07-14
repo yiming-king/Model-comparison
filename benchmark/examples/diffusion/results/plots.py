@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
+from matplotlib.ticker import FuncFormatter, MaxNLocator
 
 from ..config import FIGURE_DIR
 from .summary_diagnostic import MODELS, logml_diagnostic_frame, pmp_diagnostic_frame
@@ -13,14 +14,17 @@ from .summary_diagnostic import MODELS, logml_diagnostic_frame, pmp_diagnostic_f
 
 DATASET_COLORS = {
     "empirical": "#000000",
-    "m0": "#4C78A8",
+    "m0": "#68ABF2",
     "m1": "#F58518",
-    "m2": "#54A24B",
-    "m3": "#B279A2",
-    "simulated_from_m0": "#4C78A8",
+    "m2": "#EBE40F",
+    "m3": "#FB00B4",
+    "simulated_from_m0": "#68ABF2",
     "simulated_from_m1": "#F58518",
-    "simulated_from_m2": "#54A24B",
-    "simulated_from_m3": "#B279A2",
+    "simulated_from_m2": "#EBE40F",
+    "simulated_from_m3": "#FB00B4",
+    "m3_fast_30": "#0521F4",
+    "m3_slow_30": "#A96904",
+    "m3_fast_slow_30": "#8107F4",
 }
 REGIME_COLORS = {
     "low surprise": "#E69F00",
@@ -58,6 +62,67 @@ def _style_axes(axes) -> None:
         ax.xaxis.label.set_size(PLOT_FONT["label"])
         ax.yaxis.label.set_size(PLOT_FONT["label"])
         ax.tick_params(labelsize=PLOT_FONT["tick"])
+
+
+def _compact_signed_tick(value, pos=None) -> str:
+    if np.isclose(value, 0.0):
+        return "0"
+    sign = "-" if value < 0 else ""
+    value = abs(float(value))
+    if value >= 1_000_000:
+        return f"{sign}{value / 1_000_000:g}M"
+    if value >= 1_000:
+        return f"{sign}{value / 1_000:g}k"
+    if value >= 10:
+        return f"{sign}{value:.0f}"
+    return f"{sign}{value:g}"
+
+
+def _robust_signed_ylim(values, threshold: float, quantile: float = 1.0) -> tuple[float, float]:
+    finite = np.asarray(values[np.isfinite(values)], dtype=float)
+    if finite.size == 0:
+        return -1.5 * threshold, 1.5 * threshold
+    if quantile >= 1.0:
+        low, high = float(np.min(finite)), float(np.max(finite))
+    else:
+        tail = 0.5 * (1.0 - quantile)
+        low, high = np.quantile(finite, [tail, 1.0 - tail])
+        low, high = float(low), float(high)
+    low = min(low, -threshold, 0.0)
+    high = max(high, threshold, 0.0)
+    pad = 0.08 * max(high - low, 1.0)
+    return low - pad, high + pad
+
+
+def _add_facet_strips(fig, axes, col_labels=None, row_labels=None) -> None:
+    axes = np.atleast_2d(axes)
+    strip_color = "0.85"
+    edge_color = "0.35"
+    pad = 0.004
+    top_h = 0.034
+    right_w = 0.052
+
+    if col_labels is not None:
+        for ax, label in zip(axes[0], col_labels, strict=False):
+            pos = ax.get_position()
+            strip = fig.add_axes([pos.x0, pos.y1 + pad, pos.width, top_h])
+            strip.set_facecolor(strip_color)
+            strip.text(0.5, 0.5, label, ha="center", va="center", fontsize=18)
+            strip.set_xticks([])
+            strip.set_yticks([])
+            for spine in strip.spines.values():
+                spine.set_color(edge_color)
+
+    if row_labels is not None:
+        for ax, label in zip(axes[:, -1], row_labels, strict=False):
+            pos = ax.get_position()
+            strip = fig.add_axes([pos.x1 + pad, pos.y0, right_w, pos.height])
+            strip.set_facecolor(strip_color)
+            strip.text(0.5, 0.5, label, rotation=-90, ha="center", va="center", fontsize=16)
+            strip.set_xticks([])
+            strip.set_yticks([])
+            for spine in strip.spines.values():
+                spine.set_color(edge_color)
 
 
 def _add_rho_regions(ax, rho_low: float, x_max: float) -> None:
@@ -137,6 +202,11 @@ def _marker_handles() -> list[Line2D]:
         )
         for marker, _, label in MARKERS.values()
     ]
+
+
+def posterior_logml_error_frame(diagnostic: pd.DataFrame, posterior_plot: pd.DataFrame) -> pd.DataFrame:
+    logml = logml_diagnostic_frame(diagnostic)[["dataset", "id", "model", "signed_logml_error"]]
+    return posterior_plot.merge(logml, on=["dataset", "id", "model"], how="left")
 
 
 def _pmp_x_values(sub: pd.DataFrame, model: str, x: str):
@@ -388,5 +458,101 @@ def plot_posterior_metric_vs_rho(
     _style_axes(axes)
     fig.legend(handles=_dataset_handles(frame), loc="lower center", bbox_to_anchor=(0.5, -0.11), ncol=5, frameon=False, fontsize=PLOT_FONT["legend"])
     fig.tight_layout(rect=(0, 0.08, 1, 1))
+    _save(fig, filename)
+    return fig, axes
+
+
+def plot_logml_error_vs_posterior_metric(
+    data,
+    posterior_metric: str = "posterior_mmd",
+    logml_threshold: float | None = None,
+    posterior_threshold: float | None = None,
+    filename: str | Path | None = None,
+    sharey: bool = False,
+    y_quantile: float | dict[str, float] = 1.0,
+):
+    data_by_row = data if isinstance(data, dict) else {"S=D": data}
+    row_labels = list(data_by_row)
+    all_data = pd.concat(data_by_row.values(), ignore_index=True)
+
+    if posterior_metric not in all_data:
+        raise ValueError(f"{posterior_metric!r} is not a column in the plotting data")
+    if "signed_logml_error" not in all_data:
+        raise ValueError("'signed_logml_error' is not a column in the plotting data")
+    if logml_threshold is None:
+        logml_threshold = float(all_data["signed_logml_error"].abs().quantile(0.90))
+    if posterior_threshold is None:
+        posterior_threshold = float(all_data[posterior_metric].quantile(0.90))
+
+    if isinstance(y_quantile, dict):
+        y_quantiles = {label: y_quantile.get(label, 1.0) for label in row_labels}
+    else:
+        y_quantiles = {label: y_quantile for label in row_labels}
+
+    metric_labels = {
+        "posterior_mmd": "posterior MMD",
+        "posterior_mean_rmse": "posterior mean RMSE",
+    }
+    x_label = metric_labels.get(posterior_metric, posterior_metric.replace("_", " "))
+
+    fig, axes = plt.subplots(
+        len(row_labels),
+        len(MODELS),
+        figsize=(4.6 * len(MODELS) + 3.2, 4.0 * len(row_labels)),
+        sharex=False,
+        sharey=sharey,
+    )
+    axes = np.atleast_2d(axes)
+    fig.subplots_adjust(left=0.12, right=0.94, bottom=0.20, top=0.88, wspace=0.20, hspace=0.28)
+
+    for r, row_label in enumerate(row_labels):
+        row_data = data_by_row[row_label]
+        for c, model in enumerate(MODELS):
+            ax = axes[r, c]
+            sub = row_data[row_data["model"].eq(model)]
+            ylim = _robust_signed_ylim(sub["signed_logml_error"], logml_threshold, quantile=y_quantiles[row_label])
+
+            for flag, (marker, size, _) in MARKERS.items():
+                group = sub[sub["at_least_one_not_high_surprise"].eq(flag)]
+                if group.empty:
+                    continue
+                colors = group["dataset"].map(lambda value: DATASET_COLORS.get(value, "0.45"))
+                ax.scatter(
+                    group[posterior_metric],
+                    group["signed_logml_error"],
+                    s=size,
+                    c=colors,
+                    marker=marker,
+                    alpha=0.75,
+                    edgecolors="black",
+                    linewidths=0.55,
+                )
+
+            x_max = max(float(sub[posterior_metric].max()) * 1.08, posterior_threshold * 1.2, 1e-8)
+            ax.axvline(posterior_threshold, color="0.25", linestyle="--", linewidth=1.1)
+            ax.axhline(-logml_threshold, color="0.25", linestyle="--", linewidth=1.1)
+            ax.axhline(logml_threshold, color="0.25", linestyle="--", linewidth=1.1)
+            ax.axhline(0.0, color="0.45", linewidth=0.8)
+            ax.set_xlim(0.0, x_max)
+            ax.set_ylim(*ylim)
+            ax.yaxis.set_major_locator(MaxNLocator(nbins=4))
+            ax.yaxis.set_major_formatter(FuncFormatter(_compact_signed_tick))
+            ax.grid(alpha=0.2)
+            ax.tick_params(labelsize=15, labelbottom=True, pad=2)
+
+    col_labels = [rf"Assumed ${_model_symbol(model)}$" for model in MODELS]
+    _add_facet_strips(fig, axes, col_labels=col_labels, row_labels=row_labels)
+    fig.supylabel(r"$\log\widehat{ p}(y\mid M_j)-\log p(y\mid M_j)$", x=0.065, fontsize=20)
+    fig.supxlabel(x_label, y=0.135, fontsize=20)
+
+    handles = _marker_handles() + _dataset_handles(all_data)
+    fig.legend(
+        handles=handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.035),
+        ncol=min(len(handles), 5),
+        frameon=False,
+        fontsize=PLOT_FONT["legend"],
+    )
     _save(fig, filename)
     return fig, axes

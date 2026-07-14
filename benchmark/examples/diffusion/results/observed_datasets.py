@@ -17,6 +17,9 @@ OBSERVED_DATASETS = (
     "simulated_from_m1",
     "simulated_from_m2",
     "simulated_from_m3",
+    "m3_fast_30",
+    "m3_slow_30",
+    "m3_fast_slow_30",
 )
 
 

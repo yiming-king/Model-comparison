@@ -143,7 +143,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=default_config.batch_size)
     parser.add_argument("--num-batches", type=int, default=default_config.num_batches)
     parser.add_argument("--summary-dim", type=int, default=default_config.summary_dim)
-    parser.add_argument("--summary-multiplier", type=int, choices=[1, 2, 4], default=default_config.summary_multiplier)
+    parser.add_argument("--summary-multiplier", type=int, default=default_config.summary_multiplier)
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 

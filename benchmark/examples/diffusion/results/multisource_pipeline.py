@@ -55,6 +55,37 @@ def all_observed_posterior_plot_path(tag: str, metric: str = "l2") -> Path:
     return RESULT_DIR / "posterior_diagnostics" / f"npe_{tag}_all_observed_posterior_plot{suffix}.csv"
 
 
+def all_observed_paths(tag: str, metric: str = "l2") -> dict[str, Path]:
+    return {
+        "results": all_observed_results_path(tag),
+        "diagnostic": all_observed_diagnostic_path(tag, metric=metric),
+        "posterior": all_observed_posterior_path(tag),
+        "posterior_plot": all_observed_posterior_plot_path(tag, metric=metric),
+    }
+
+
+def covers_observed_datasets(frame: pd.DataFrame) -> bool:
+    return set(OBSERVED_DATASETS).issubset(set(frame["dataset"].unique()))
+
+
+def load_cached_all_observed(config: TrainingConfig, metric: str = "l2") -> dict[str, pd.DataFrame]:
+    paths = all_observed_paths(summary_tag(config), metric=metric)
+    missing = [str(path) for path in paths.values() if not path.exists()]
+    if missing:
+        raise FileNotFoundError("Run multi_source_ood_diagnostic.ipynb first. Missing:\n" + "\n".join(missing))
+
+    frames = {
+        "results": pd.read_csv(paths["results"], keep_default_na=False),
+        "diagnostic": pd.read_csv(paths["diagnostic"], keep_default_na=False),
+        "posterior": load_posterior_diagnostic(paths["posterior"]),
+        "posterior_plot": load_posterior_diagnostic(paths["posterior_plot"]),
+    }
+    incomplete = [name for name, frame in frames.items() if not covers_observed_datasets(frame)]
+    if incomplete:
+        raise ValueError(f"Cached files do not include all OBSERVED_DATASETS: {incomplete}")
+    return frames
+
+
 def load_or_fit_references(
     approximators: dict[str, object],
     config: TrainingConfig,
@@ -158,26 +189,39 @@ def compute_or_load_all_observed(
     approximators = load_approximators(config)
     references = load_or_fit_references(approximators, config, metric=metric, overwrite=recompute_references)
 
-    results_path = all_observed_results_path(tag)
-    diagnostic_path = all_observed_diagnostic_path(tag, metric=metric)
-    posterior_path = all_observed_posterior_path(tag)
-    posterior_plot_path = all_observed_posterior_plot_path(tag, metric=metric)
+    paths = all_observed_paths(tag, metric=metric)
+    results_path = paths["results"]
+    diagnostic_path = paths["diagnostic"]
+    posterior_path = paths["posterior"]
+    posterior_plot_path = paths["posterior_plot"]
 
     if results_path.exists() and not recompute:
         results = pd.read_csv(results_path, keep_default_na=False)
+        recompute_results = not covers_observed_datasets(results)
     else:
+        recompute_results = True
+
+    if recompute_results:
         results = compute_all_observed_results(approximators, num_samples=num_samples, batch_size=batch_size)
         save_results(results, results_path)
 
-    if diagnostic_path.exists() and not recompute:
+    if diagnostic_path.exists() and not recompute and not recompute_references:
         diagnostic = pd.read_csv(diagnostic_path, keep_default_na=False)
+        recompute_diagnostic = not covers_observed_datasets(diagnostic)
     else:
+        recompute_diagnostic = True
+
+    if recompute_diagnostic:
         diagnostic = compute_all_observed_summary_diagnostics(results, approximators, references)
         save_diagnostic(diagnostic, diagnostic_path)
 
     if posterior_path.exists() and not recompute:
         posterior = load_posterior_diagnostic(posterior_path)
+        recompute_posterior = not covers_observed_datasets(posterior)
     else:
+        recompute_posterior = True
+
+    if recompute_posterior:
         posterior = compute_all_observed_posterior_diagnostics(
             approximators,
             num_samples=num_samples,
@@ -186,9 +230,13 @@ def compute_or_load_all_observed(
         )
         save_posterior_diagnostic(posterior, posterior_path)
 
-    if posterior_plot_path.exists() and not recompute:
+    if posterior_plot_path.exists() and not recompute and not recompute_references:
         posterior_plot = load_posterior_diagnostic(posterior_plot_path)
+        recompute_posterior_plot = not covers_observed_datasets(posterior_plot)
     else:
+        recompute_posterior_plot = True
+
+    if recompute_posterior_plot:
         posterior_plot = posterior_plot_frame(diagnostic, posterior)
         save_posterior_diagnostic(posterior_plot, posterior_plot_path)
 
