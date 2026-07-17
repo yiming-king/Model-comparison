@@ -156,7 +156,12 @@ def _posterior_predictive_draws(
         "tau": posterior.loc[keep, ["tau"]].to_numpy(),
     }
     constrained = simulator._constrain_parameters(**parameters)
-    simulated = simulator.likelihood((len(keep),), **constrained)
+    numpy_state = np.random.get_state()
+    try:
+        np.random.seed(seed + 10_000)
+        simulated = simulator.likelihood((len(keep),), **constrained)
+    finally:
+        np.random.set_state(numpy_state)
     if expected_conditions is not None:
         expected_conditions = np.asarray(expected_conditions, dtype=int)
         simulated_conditions = np.asarray(simulated["conditions"], dtype=int)
@@ -746,24 +751,29 @@ def npe_posterior_predictive_density_frame(
     """Compare observed RT densities with NPE posterior predictive densities."""
     observed, _ = load_observed_dataset(dataset)
     replicated = {}
-    for model_index, model in enumerate(MODELS):
-        approximator = load_approximator(model, config=config)
-        draws = posterior_draws(
-            approximator,
-            observed,
-            num_samples=num_draws,
-            seed=seed + model_index,
-            batch_size=batch_size,
-        )
-        simulator = SIMULATORS[model]
-        model_replicates = []
-        for dataset_draws in draws:
-            parameters = parameter_dict(dataset_draws, model)
-            constrained = simulator._constrain_parameters(**parameters)
-            model_replicates.append(
-                simulator.likelihood((num_draws,), **constrained)["rt"]
+    numpy_state = np.random.get_state()
+    try:
+        for model_index, model in enumerate(MODELS):
+            approximator = load_approximator(model, config=config)
+            draws = posterior_draws(
+                approximator,
+                observed,
+                num_samples=num_draws,
+                seed=seed + model_index,
+                batch_size=batch_size,
             )
-        replicated[model] = np.stack(model_replicates)
+            simulator = SIMULATORS[model]
+            np.random.seed(seed + 10_000 + model_index)
+            model_replicates = []
+            for dataset_draws in draws:
+                parameters = parameter_dict(dataset_draws, model)
+                constrained = simulator._constrain_parameters(**parameters)
+                model_replicates.append(
+                    simulator.likelihood((num_draws,), **constrained)["rt"]
+                )
+            replicated[model] = np.stack(model_replicates)
+    finally:
+        np.random.set_state(numpy_state)
 
     frame = _density_frame(observed, replicated, dataset, interval, num_bins)
     frame["summary"] = config.summary_label
@@ -1100,3 +1110,88 @@ def plot_ppc_densities(
         path.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(path, dpi=300, bbox_inches="tight")
     return fig, axes
+
+
+def generate_npe_ppc_density_figures(
+    summary_multipliers: tuple[int, ...] = (1, 2, 4, 6),
+    dataset: str = "empirical",
+    num_draws: int = 128,
+    interval: float = 0.90,
+    num_bins: int = 80,
+    batch_size: int | None = 8,
+    seed: int = 2025,
+    recompute: bool = False,
+    output_dir: str | Path | None = None,
+) -> pd.DataFrame:
+    """Generate the NPE RT-density PPC figure for every requested summary dimension."""
+    output_dir = Path(output_dir) if output_dir else RESULT_DIR / "plots" / "model_checks"
+    rows = []
+    for multiplier in summary_multipliers:
+        config = TrainingConfig(summary_multiplier=multiplier)
+        cache_path = PPC_DIR / f"npe_{config.summary_label}_{dataset}_density.csv"
+        frame = compute_or_load_npe_ppc_density(
+            config=config,
+            dataset=dataset,
+            num_draws=num_draws,
+            interval=interval,
+            num_bins=num_bins,
+            batch_size=batch_size,
+            seed=seed,
+            path=cache_path,
+            recompute=recompute,
+        )
+        path = output_dir / f"npe_ppc_{dataset}_rt_densities_{config.summary_label}.png"
+        fig, _ = plot_ppc_densities(
+            frame,
+            filename=path,
+            title=f"NPE posterior predictive densities (S={multiplier}D)" if multiplier > 1
+            else "NPE posterior predictive densities (S=D)",
+        )
+        plt.close(fig)
+        rows.append(
+            {
+                "summary": config.summary_label,
+                "density_cache": str(cache_path),
+                "figure": str(path),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def generate_stan_ppc_density_figure(
+    dataset: str = "empirical",
+    num_draws: int = 128,
+    interval: float = 0.90,
+    num_bins: int = 80,
+    seed: int = 2025,
+    recompute: bool = False,
+    output_dir: str | Path | None = None,
+) -> pd.DataFrame:
+    """Generate the RT-density PPC figure based on Stan posterior draws."""
+    output_dir = Path(output_dir) if output_dir else RESULT_DIR / "plots" / "model_checks"
+    cache_path = PPC_DIR / f"stan_ppc_{dataset}_density.csv"
+    frame = compute_or_load_ppc_density(
+        path=cache_path,
+        dataset=dataset,
+        num_draws=num_draws,
+        interval=interval,
+        num_bins=num_bins,
+        seed=seed,
+        recompute=recompute,
+    )
+    figure_path = output_dir / f"stan_ppc_{dataset}_rt_densities.png"
+    fig, _ = plot_ppc_densities(
+        frame,
+        filename=figure_path,
+        title="Stan posterior predictive densities",
+    )
+    plt.close(fig)
+    return pd.DataFrame(
+        [
+            {
+                "source": "Stan",
+                "density_cache": str(cache_path),
+                "figure": str(figure_path),
+            }
+        ]
+    )

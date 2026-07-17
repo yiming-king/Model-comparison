@@ -43,11 +43,9 @@ MARKERS = {
     True: {"marker": "D", "size": 28, "label": "at least one not high surprise"},
 }
 PLOT_FONT = {"strip": 16, "label": 15, "ylabel": 16, "tick": 12, "legend": 11}
-PMP_ERROR_BOUND = 0.05
+PMP_ERROR_BOUND = 0.1
 LOGML_ERROR_BOUND = 10.0
-POSTERIOR_MMD_BOUND = 0.40
-RHO_X_MIN = -1.6
-RHO_X_MAX = 4.0
+POSTERIOR_MMD_BOUND = 0.50
 BOUNDARY_LINE_COLOR = "#1300E0"
 MAX_LINE_COLOR = "#7A0276"
 
@@ -322,7 +320,12 @@ def _model_label(model: str) -> str:
     return rf"Assumed $M_{{{model.removeprefix('m')}}}$"
 
 
-def _make_grid(row_labels: list[str], models: tuple[str, ...], sharey: bool = False):
+def _make_grid(
+    row_labels: list[str],
+    models: tuple[str, ...],
+    sharey: bool = False,
+    right: float = 0.88,
+):
     fig, axes = plt.subplots(
         len(row_labels),
         len(models),
@@ -330,7 +333,7 @@ def _make_grid(row_labels: list[str], models: tuple[str, ...], sharey: bool = Fa
         sharey=sharey,
         squeeze=False,
     )
-    fig.subplots_adjust(left=0.10, right=0.88, bottom=0.17, top=0.88, wspace=0.12, hspace=0.28)
+    fig.subplots_adjust(left=0.10, right=right, bottom=0.17, top=0.88, wspace=0.12, hspace=0.28)
     return fig, axes
 
 
@@ -352,63 +355,75 @@ def _add_facet_strips(fig, axes, row_labels: list[str], models: tuple[str, ...])
         strip.set_yticks([])
 
 
-def _scatter(ax, data: pd.DataFrame, x: str, y: str, color_col: str | None = None, vmin=None, vmax=None):
+def _scatter(
+    ax,
+    data: pd.DataFrame,
+    x: str,
+    y: str,
+    color_col: str | None = None,
+    vmin=None,
+    vmax=None,
+    classify_surprise: bool = True,
+    alpha: float = 0.65,
+):
     artist = None
-    for flag, style in MARKERS.items():
-        group = data.loc[data["at_least_one_not_high_surprise"].eq(flag)]
+    groups = (
+        [(data.loc[data["at_least_one_not_high_surprise"].eq(flag)], style) for flag, style in MARKERS.items()]
+        if classify_surprise
+        else [(data, {"marker": "o", "size": 18})]
+    )
+    for group, style in groups:
         if group.empty:
             continue
         if color_col:
             artist = ax.scatter(
                 group[x], group[y], c=group[color_col], cmap="viridis", vmin=vmin, vmax=vmax,
-                s=style["size"], marker=style["marker"], alpha=0.64,
+                s=style["size"], marker=style["marker"], alpha=alpha,
                 edgecolors="black", linewidths=0.5,
             )
         else:
             for dataset, part in group.groupby("dataset", sort=False):
                 artist = ax.scatter(
                     part[x], part[y], color=DATASET_COLORS.get(dataset, "0.45"),
-                    s=style["size"], marker=style["marker"], alpha=0.64,
+                    s=style["size"], marker=style["marker"], alpha=alpha,
                     edgecolors="black", linewidths=0.5,
                 )
     return artist
 
 
-def _scatter_with_means(ax, data: pd.DataFrame, x: str, y: str) -> None:
-    _scatter(ax, data, x, y)
+def _scatter_with_means(
+    ax,
+    data: pd.DataFrame,
+    x: str,
+    y: str,
+    classify_surprise: bool,
+) -> None:
+    if classify_surprise:
+        _scatter(ax, data, x, y)
+    else:
+        for dataset, part in data.groupby("dataset", sort=False):
+            ax.scatter(
+                part[x],
+                part[y],
+                color=DATASET_COLORS.get(dataset, "0.45"),
+                s=18,
+                marker="o",
+                alpha=0.4,
+                edgecolors="none",
+                zorder=3,
+            )
     for dataset, part in data.groupby("dataset", sort=False):
         ax.scatter(
-            [part[x].mean()], [part[y].mean()], marker="*", s=145,
-            color=DATASET_COLORS.get(dataset, "0.45"), edgecolors="black", linewidths=0.9, zorder=7,
+            [part[x].mean()],
+            [part[y].mean()],
+            marker="*",
+            s=190,
+            color=DATASET_COLORS.get(dataset, "0.45"),
+            alpha=1.0,
+            edgecolors="black",
+            linewidths=1.2,
+            zorder=7,
         )
-
-
-def _add_empirical_rug(ax, data: pd.DataFrame, x: str) -> None:
-    """Show one marginal tick per empirical participant without altering coordinates."""
-    if data.empty or not data["dataset"].eq("empirical").all():
-        return
-    ax.plot(
-        data[x],
-        np.full(len(data), 0.025),
-        transform=ax.get_xaxis_transform(),
-        linestyle="none",
-        marker="|",
-        markersize=6,
-        markeredgewidth=0.9,
-        color="black",
-        alpha=0.65,
-        zorder=8,
-    )
-    ax.text(
-        0.02,
-        0.96,
-        f"n = {len(data)}",
-        transform=ax.transAxes,
-        ha="left",
-        va="top",
-        fontsize=9,
-        color="0.25",
-    )
 
 
 def _add_rho_regions(ax, rho_low: float, x_min: float, x_max: float) -> None:
@@ -456,11 +471,21 @@ def _add_boundary_line(ax, data: pd.DataFrame, x_col: str, y_col: str, bound: fl
     )
 
 
-def _legend_handles(data: pd.DataFrame, include_means: bool = False) -> list[Line2D]:
-    handles = [
-        Line2D([0], [0], marker=style["marker"], color="none", markerfacecolor="0.5", markeredgecolor="black", markersize=7, label=style["label"])
-        for style in MARKERS.values()
-    ]
+def _legend_handles(
+    data: pd.DataFrame,
+    include_means: bool = False,
+    classify_surprise: bool = True,
+) -> list[Line2D]:
+    handles = []
+    if classify_surprise:
+        handles.extend(
+            Line2D(
+                [0], [0], marker=style["marker"], color="none",
+                markerfacecolor="0.5", markeredgecolor="black", markersize=7,
+                label=style["label"],
+            )
+            for style in MARKERS.values()
+        )
     if include_means:
         handles.append(Line2D([0], [0], marker="*", color="none", markerfacecolor="0.5", markeredgecolor="black", markersize=11, label="source mean"))
     handles.extend(
@@ -470,13 +495,26 @@ def _legend_handles(data: pd.DataFrame, include_means: bool = False) -> list[Lin
     return handles
 
 
-def _finish(fig, axes, row_labels, models, ylabel, data, include_means=False) -> None:
+def _finish(
+    fig,
+    axes,
+    row_labels,
+    models,
+    ylabel,
+    data,
+    include_means: bool = False,
+    classify_surprise: bool = True,
+) -> None:
     for ax in axes.ravel():
         ax.grid(alpha=0.18)
         ax.tick_params(labelsize=PLOT_FONT["tick"])
     _add_facet_strips(fig, axes, row_labels, models)
     fig.supylabel(ylabel, x=0.035, fontsize=PLOT_FONT["ylabel"])
-    handles = _legend_handles(data, include_means=include_means)
+    handles = _legend_handles(
+        data,
+        include_means=include_means,
+        classify_surprise=classify_surprise,
+    )
     fig.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.02), ncol=min(5, len(handles)), frameon=False, fontsize=PLOT_FONT["legend"])
 
 
@@ -499,10 +537,16 @@ def plot_rho_grid(
     y_bound: float | None = None,
     signed_y: bool = True,
     source_means: bool = False,
+    classify_surprise: bool = True,
 ) -> Path:
     row_labels = list(data_by_summary)
     all_data = pd.concat(data_by_summary.values(), ignore_index=True)
-    fig, axes = _make_grid(row_labels, models, sharey=sharey)
+    fig, axes = _make_grid(
+        row_labels,
+        models,
+        sharey=sharey,
+        right=0.80 if color_col else 0.88,
+    )
     shared_y = _padded_limits(all_data[y_col], include_zero=True) if sharey else None
     vmin = float(all_data[color_col].min()) if color_col else None
     vmax = float(all_data[color_col].max()) if color_col else None
@@ -511,28 +555,55 @@ def plot_rho_grid(
         for c, model in enumerate(models):
             ax = axes[r, c]
             sub = data_by_summary[label].loc[data_by_summary[label]["model"].eq(model)]
-            x_min, x_max = _padded_limits(sub["rho"], include_zero=True, padding=0.20)
-            x_min, x_max = min(RHO_X_MIN, x_min), max(RHO_X_MAX, x_max)
-            _add_rho_regions(ax, float(sub["rho_low"].iloc[0]), x_min, x_max)
+            rho_low = float(sub["rho_low"].iloc[0])
+            x_values = pd.concat(
+                [sub["rho"], pd.Series([rho_low, 1.0])],
+                ignore_index=True,
+            )
+            x_min, x_max = _padded_limits(x_values, padding=0.12)
+            _add_rho_regions(ax, rho_low, x_min, x_max)
             if source_means:
-                _scatter_with_means(ax, sub, "rho", y_col)
+                _scatter_with_means(
+                    ax,
+                    sub,
+                    "rho",
+                    y_col,
+                    classify_surprise=classify_surprise,
+                )
             else:
-                last = _scatter(ax, sub, "rho", y_col, color_col=color_col, vmin=vmin, vmax=vmax)
-            _add_empirical_rug(ax, sub, "rho")
+                last = _scatter(
+                    ax,
+                    sub,
+                    "rho",
+                    y_col,
+                    color_col=color_col,
+                    vmin=vmin,
+                    vmax=vmax,
+                    classify_surprise=classify_surprise,
+                )
             if max_line:
                 _add_max_line(ax, sub, y_col, signed_y)
             _add_boundary_line(ax, sub, "rho", y_col, y_bound, signed_y)
             ax.axhline(0.0, color="0.35", linewidth=0.8)
-            ax.set_xscale("symlog", linthresh=1.0, linscale=1.0)
             ax.set_xlim(x_min, x_max)
             if shared_y:
                 ax.set_ylim(*shared_y)
             else:
                 ax.set_ylim(*_padded_limits(sub[y_col], include_zero=True))
             ax.set_xlabel(rf"signed $\rho_{{{model.removeprefix('m')}}}(y)$" if r == len(row_labels) - 1 else "")
-    _finish(fig, axes, row_labels, models, ylabel, all_data, include_means=source_means)
+    _finish(
+        fig,
+        axes,
+        row_labels,
+        models,
+        ylabel,
+        all_data,
+        include_means=source_means,
+        classify_surprise=classify_surprise,
+    )
     if color_col and last is not None:
-        cbar = fig.colorbar(last, ax=axes, fraction=0.018, pad=0.02)
+        cax = fig.add_axes([0.90, 0.20, 0.016, 0.62])
+        cbar = fig.colorbar(last, cax=cax)
         cbar.set_label("Posterior MMD")
     return _save(fig, path)
 
@@ -549,7 +620,13 @@ def plot_logml_vs_posterior_mmd(
         for c, model in enumerate(models):
             ax = axes[r, c]
             sub = data_by_summary[label].loc[data_by_summary[label]["model"].eq(model)]
-            _scatter(ax, sub, "posterior_mmd", "signed_logml_error")
+            _scatter(
+                ax,
+                sub,
+                "posterior_mmd",
+                "signed_logml_error",
+                classify_surprise=False,
+            )
             ax.axvline(POSTERIOR_MMD_BOUND, color="0.30", linestyle="--", linewidth=1.0)
             ax.axhline(LOGML_ERROR_BOUND, color="0.30", linestyle="--", linewidth=1.0)
             ax.axhline(-LOGML_ERROR_BOUND, color="0.30", linestyle="--", linewidth=1.0)
@@ -560,6 +637,7 @@ def plot_logml_vs_posterior_mmd(
     _finish(
         fig, axes, row_labels, models,
         r"$\log\widehat{p}(y\mid M_j)-\log p(y\mid M_j)$", all_data,
+        classify_surprise=False,
     )
     return _save(fig, path)
 
@@ -663,12 +741,12 @@ def run_summary_dimension_comparison(
 
         plot_specs = (
             (plot_logml_vs_posterior_mmd, logml_posterior, "combined_logml_error_vs_posterior_mmd.png", {}),
-            (plot_rho_grid, posterior_mmd, "combined_posterior_mmd_vs_rho.png", {"y_col": "posterior_mmd", "ylabel": "Posterior MMD", "max_line": True, "y_bound": POSTERIOR_MMD_BOUND, "signed_y": False}),
-            (plot_rho_grid, logml, "combined_logml_error_vs_rho.png", {"y_col": "signed_logml_error", "ylabel": r"$\log\widehat{p}(y\mid M_j)-\log p(y\mid M_j)$", "sharey": False, "max_line": True, "y_bound": LOGML_ERROR_BOUND}),
+            (plot_rho_grid, posterior_mmd, "combined_posterior_mmd_vs_rho.png", {"y_col": "posterior_mmd", "ylabel": "Posterior MMD", "max_line": True, "y_bound": POSTERIOR_MMD_BOUND, "signed_y": False, "classify_surprise": False}),
+            (plot_rho_grid, logml, "combined_logml_error_vs_rho.png", {"y_col": "signed_logml_error", "ylabel": r"$\log\widehat{p}(y\mid M_j)-\log p(y\mid M_j)$", "sharey": False, "max_line": True, "y_bound": LOGML_ERROR_BOUND, "classify_surprise": False}),
             (plot_rho_grid, pmp, "combined_pmp_error_vs_rho.png", {"y_col": "signed_pmp_error", "ylabel": r"$\hat{p}(M_j\mid y)-p(M_j\mid y)$", "max_line": True, "y_bound": PMP_ERROR_BOUND}),
             (plot_rho_grid, pmp_posterior, "combined_pmp_error_vs_rho_colored_by_posterior_mmd.png", {"y_col": "signed_pmp_error", "ylabel": r"$\hat{p}(M_j\mid y)-p(M_j\mid y)$", "color_col": "posterior_mmd", "y_bound": PMP_ERROR_BOUND}),
-            (plot_rho_grid, posterior_mmd, "combined_posterior_mmd_vs_rho_source_means.png", {"y_col": "posterior_mmd", "ylabel": "Posterior MMD", "source_means": True, "max_line": True, "y_bound": POSTERIOR_MMD_BOUND, "signed_y": False}),
-            (plot_rho_grid, logml, "combined_logml_error_vs_rho_source_means.png", {"y_col": "signed_logml_error", "ylabel": r"$\log\widehat{p}(y\mid M_j)-\log p(y\mid M_j)$", "sharey": False, "source_means": True, "max_line": True, "y_bound": LOGML_ERROR_BOUND}),
+            (plot_rho_grid, posterior_mmd, "combined_posterior_mmd_vs_rho_source_means.png", {"y_col": "posterior_mmd", "ylabel": "Posterior MMD", "source_means": True, "max_line": True, "y_bound": POSTERIOR_MMD_BOUND, "signed_y": False, "classify_surprise": False}),
+            (plot_rho_grid, logml, "combined_logml_error_vs_rho_source_means.png", {"y_col": "signed_logml_error", "ylabel": r"$\log\widehat{p}(y\mid M_j)-\log p(y\mid M_j)$", "sharey": False, "source_means": True, "max_line": True, "y_bound": LOGML_ERROR_BOUND, "classify_surprise": False}),
             (plot_rho_grid, pmp, "combined_pmp_error_vs_rho_source_means.png", {"y_col": "signed_pmp_error", "ylabel": r"$\hat{p}(M_j\mid y)-p(M_j\mid y)$", "source_means": True, "max_line": True, "y_bound": PMP_ERROR_BOUND}),
             (plot_ambiguity_grid, pmp, "combined_pmp_error_vs_log_ambiguity.png", {}),
         )
