@@ -37,8 +37,12 @@ MODEL_SPECS = {
 ASSUMED_MODELS = tuple(MODEL_SPECS)[:4]
 SOURCE_MODELS = tuple(MODEL_SPECS)
 SOURCE_COLORS = ("#F0E442", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00", "#0072B2", "#E011CF", "#999999", "#1F03EE", "#882255", "#44AA99",)
-REGIME_COLORS = {"interpolation": "#E69F00", "in_distribution": "#0072B2", "extrapolation": "#CC79A7"}
+TYPICAL_SET_FILL = "#DCEEDC"
 DEFAULT_DISTANCE_METRIC = "l2"
+DIAGNOSTIC_XLABELS = {
+    "l2": r"Diagnostic: $L_2$-based",
+    "linf": r"Diagnostic: $L_\infty$-based",
+}
 NEAREST_TWO_CLASS_MARKERS = {
     "both extrapolative": ("o", 32),
     "only one not extrapolative": ("D", 46),
@@ -393,11 +397,11 @@ def summarize_frames(logml_df: pd.DataFrame, pmp_df: pd.DataFrame) -> tuple[pd.D
 
 
 def _add_distance_regions(ax, low: float, high: float, x_max: float, x_min: float = 0.0) -> None:
-    ax.axvspan(x_min, low, color=REGIME_COLORS["interpolation"], alpha=0.08)
-    ax.axvspan(low, high, color=REGIME_COLORS["in_distribution"], alpha=0.07)
-    ax.axvspan(high, x_max, color=REGIME_COLORS["extrapolation"], alpha=0.07)
-    ax.axvline(low, color=REGIME_COLORS["interpolation"], linestyle="--", linewidth=1)
-    ax.axvline(high, color=REGIME_COLORS["extrapolation"], linestyle="--", linewidth=1)
+    """Highlight only the calibrated typical set; leave both tails unshaded."""
+    del x_min, x_max  # Retained in the signature for compatibility with older notebooks.
+    ax.axvspan(low, high, color=TYPICAL_SET_FILL, alpha=0.70, zorder=0)
+    ax.axvline(low, color="0.45", linestyle=":", linewidth=0.9, zorder=1)
+    ax.axvline(high, color="0.25", linestyle="--", linewidth=0.9, zorder=1)
 
 
 def _add_misspec_label(ax, assumed: str, source: str) -> None:
@@ -450,6 +454,40 @@ def _style_colorbar(cbar) -> None:
     cbar.ax.tick_params(labelsize=PLOT_FONT["tick"])
 
 
+def _diagnostic_xlabel(distance_metric: str) -> str:
+    metric = distance_metric.lower()
+    if metric not in DIAGNOSTIC_XLABELS:
+        raise ValueError(
+            f"distance_metric must be one of {tuple(DIAGNOSTIC_XLABELS)}"
+        )
+    return DIAGNOSTIC_XLABELS[metric]
+
+
+def _apply_axis_scales(
+    ax,
+    xscale: str = "linear",
+    yscale: str = "linear",
+    x_linthresh: float = 1.0,
+    y_linthresh: float = 1.0,
+) -> None:
+    """Apply independently configurable linear, logarithmic, or symlog axes."""
+    valid_scales = {"linear", "log", "symlog"}
+    if xscale not in valid_scales or yscale not in valid_scales:
+        raise ValueError("xscale and yscale must be 'linear', 'log', or 'symlog'")
+    if xscale == "symlog":
+        if x_linthresh <= 0:
+            raise ValueError("x_linthresh must be positive")
+        ax.set_xscale("symlog", linthresh=x_linthresh)
+    else:
+        ax.set_xscale(xscale)
+    if yscale == "symlog":
+        if y_linthresh <= 0:
+            raise ValueError("y_linthresh must be positive")
+        ax.set_yscale("symlog", linthresh=y_linthresh)
+    else:
+        ax.set_yscale(yscale)
+
+
 def _extrapolation_class(n_not: int) -> str:
     if n_not == 0:
         return "all extrapolative"
@@ -497,6 +535,11 @@ def plot_logml_error_vs_distance(
     error_bound: float | None = None,
     x_min: float | None = None,
     filename: str | None = None,
+    distance_metric: str | None = None,
+    xscale: str = "linear",
+    yscale: str = "linear",
+    x_linthresh: float = 1.0,
+    y_linthresh: float = 1.0,
 ):
     """Plot log marginal likelihood error vs distance, one panel per assumed model."""
     if x not in {"distance", "log_distance", "logdistance", "rho", "log_rho", "logrho"}:
@@ -523,7 +566,12 @@ def plot_logml_error_vs_distance(
             sub[x_col] = _safe_log(rho) if use_log_rho else rho
             low = float(_safe_log(sub["dm_low"].iloc[0] / sub["dm_high"].iloc[0])) if use_log_rho else float(sub["dm_low"].iloc[0] / sub["dm_high"].iloc[0])
             high = 0.0 if use_log_rho else 1.0
-            x_label = rf"$\log \rho_{assumed[-1]}(y)$" if use_log_rho else rf"$\rho_{assumed[-1]}(y)$"
+            x_label = (
+                _diagnostic_xlabel(distance_metric)
+                if distance_metric is not None
+                else rf"$\log \rho_{assumed[-1]}(y)$" if use_log_rho
+                else rf"$\rho_{assumed[-1]}(y)$"
+            )
         else:
             sub[x_col] = _safe_log(sub["d_M"]) if use_log_distance else sub["d_M"]
             low = float(_safe_log(sub["dm_low"].iloc[0])) if use_log_distance else float(sub["dm_low"].iloc[0])
@@ -563,6 +611,13 @@ def plot_logml_error_vs_distance(
         ax.set_xlim(x_min, x_max)
         ax.set_title(rf"Assumed {assumed.upper()}")
         ax.set_xlabel(x_label)
+        _apply_axis_scales(
+            ax,
+            xscale=xscale,
+            yscale=yscale,
+            x_linthresh=x_linthresh,
+            y_linthresh=y_linthresh,
+        )
         ax.grid(alpha=0.18)
 
     axes[0].set_ylabel(r"$\widehat{\log p}(y\mid M_j)-\log p(y\mid M_j)$")
@@ -603,6 +658,10 @@ def plot_signed_logml_error_grid(
     error_bound: float | None = None,
     x_min: float | None = None,
     filename: str | None = None,
+    xscale: str = "linear",
+    yscale: str = "linear",
+    x_linthresh: float = 1.0,
+    y_linthresh: float = 1.0,
 ):
     if x not in {"distance", "log_distance", "logdistance"}:
         raise ValueError("x must be 'distance' or 'log_distance'")
@@ -624,6 +683,13 @@ def plot_signed_logml_error_grid(
             _add_first_large_error(ax, plot_sub, "_x", "signed_logml_error", error_bound)
             ax.axhline(0, color="0.35", linewidth=0.8)
             ax.set_xlim(x_min, x_max)
+            _apply_axis_scales(
+                ax,
+                xscale=xscale,
+                yscale=yscale,
+                x_linthresh=x_linthresh,
+                y_linthresh=y_linthresh,
+            )
             ax.grid(alpha=0.16)
             _add_misspec_label(ax, assumed, source)
             if r == 0:
@@ -660,6 +726,10 @@ def plot_posterior_metric_grid(
     x: str = "distance",
     x_min: float | None = None,
     filename: str | None = None,
+    xscale: str = "linear",
+    yscale: str = "linear",
+    x_linthresh: float = 1.0,
+    y_linthresh: float = 1.0,
 ):
     """Plot a posterior-quality metric against summary distance."""
     metrics = {
@@ -694,6 +764,13 @@ def plot_posterior_metric_grid(
             _add_distance_regions(ax, low, high, x_max, x_min=x_min)
             ax.scatter(x_values, sub[metric_col], s=20, color="0.15", alpha=0.75)
             ax.set_xlim(x_min, x_max)
+            _apply_axis_scales(
+                ax,
+                xscale=xscale,
+                yscale=yscale,
+                x_linthresh=x_linthresh,
+                y_linthresh=y_linthresh,
+            )
             ax.grid(alpha=0.16)
             _add_misspec_label(ax, assumed, source)
             if r == 0:
@@ -726,8 +803,6 @@ def _pmp_long_frame(pmp_df: pd.DataFrame, estimate: str = "npe") -> pd.DataFrame
         ]
         part = pmp_df[cols].copy()
         part.columns = ["source_model", "id", "at_least_one_not_extrapolative", "extrapolation_class", "nearest_two_extrapolation_class", "A_raw", "A_true", "d_min", "d_second", "d_M", "dm_low", "dm_high", "gold", "npe", "direct", "signed_error"]
-        part["A_score"] = np.log1p(part["A_raw"])
-        part["A_true_score"] = np.log1p(part["A_true"])
         part["rho_M"] = part["d_M"] / part["dm_high"]
         part["rho_low"] = part["dm_low"] / part["dm_high"]
         part["log_d_M"] = _safe_log(part["d_M"])
@@ -746,8 +821,6 @@ def _pmp_rmse_frame(pmp_df: pd.DataFrame, estimate: str = "npe") -> pd.DataFrame
     out["pmp_rmse"] = np.sqrt(np.mean(np.square(out[error_cols].to_numpy(float)), axis=1))
     out["A_raw"] = out["ambiguity_score"]
     out["A_true"] = out["ambiguity_score_true"]
-    out["A_score"] = np.log1p(out["A_raw"])
-    out["A_true_score"] = np.log1p(out["A_true"])
     out["log_d_min"] = _safe_log(out["d_min"])
     return out
 
@@ -824,7 +897,11 @@ def _pmp_model_index(model: str) -> str:
     return model[1:] if model.lower().startswith("m") else model
 
 
-def _pmp_x_column(x: str, model: str | None = None) -> tuple[str, str]:
+def _pmp_x_column(
+    x: str,
+    model: str | None = None,
+    distance_metric: str | None = None,
+) -> tuple[str, str]:
     if x == "distance":
         if model is None:
             raise ValueError("x='distance' is only available for model-wise PMP plots")
@@ -838,26 +915,30 @@ def _pmp_x_column(x: str, model: str | None = None) -> tuple[str, str]:
     if x == "rho":
         if model is None:
             raise ValueError("x='rho' is only available for model-wise PMP plots")
-        j = _pmp_model_index(model)
-        return "rho_M", rf"$\rho_{j}(y)$"
+        label = (
+            _diagnostic_xlabel(distance_metric)
+            if distance_metric is not None
+            else rf"$\rho_{_pmp_model_index(model)}(y)$"
+        )
+        return "rho_M", label
     if x in {"log_rho", "logrho"}:
         if model is None:
             raise ValueError("x='log_rho' is only available for model-wise PMP plots")
-        j = _pmp_model_index(model)
-        return "log_rho_M", rf"$\log \rho_{j}(y)$"
+        label = (
+            _diagnostic_xlabel(distance_metric)
+            if distance_metric is not None
+            else rf"$\log \rho_{_pmp_model_index(model)}(y)$"
+        )
+        return "log_rho_M", label
     if x == "A":
         return "A_raw", r"$A_{\mathrm{raw}}(y)$"
-    if x in {"logA", "x"}:
-        return "A_score", r"$\log(1+A(y))$"
     if x in {"A_true", "trueA"}:
         return "A_true", r"$A_{\mathrm{true}}(y)$"
-    if x in {"logA_true", "true_logA"}:
-        return "A_true_score", r"$A_{\mathrm{true}}(y)$"
     if x == "d_min":
         return "d_min", r"$d_{\min}(y)$"
     if x == "log_d_min":
         return "log_d_min", r"$\log d_{\min}(y)$"
-    raise ValueError("x must be 'distance', 'log_distance', 'rho', 'log_rho', 'A', 'logA', 'A_true', 'logA_true', 'x', 'd_min', or 'log_d_min'")
+    raise ValueError("x must be 'distance', 'log_distance', 'rho', 'log_rho', 'A', 'A_true', 'd_min', or 'log_d_min'")
 
 
 def _assumed_region_bounds(sub: pd.DataFrame, x: str) -> tuple[float, float]:
@@ -960,6 +1041,11 @@ def plot_pmp_diagnostic(
     error_subset: str | None = None,
     x_min: float = -0.5,
     show_rho_leq_one_max_error: bool = True,
+    distance_metric: str | None = None,
+    xscale: str = "linear",
+    yscale: str = "linear",
+    x_linthresh: float = 1.0,
+    y_linthresh: float = 0.05,
 ):
     data, by_model = _pmp_plot_data(pmp_df, y, estimate)
     y_col = "signed_error" if y == "signed_error" else "pmp_rmse"
@@ -988,7 +1074,11 @@ def plot_pmp_diagnostic(
 
     for model in ASSUMED_MODELS if by_model else [None]:
         sub = data[data["model"] == model] if by_model else data
-        x_col, x_label = _pmp_x_column(x, model)
+        x_col, x_label = _pmp_x_column(
+            x,
+            model,
+            distance_metric=distance_metric,
+        )
         x_max = max(float(sub[x_col].max()) * 1.05, 1e-12)
         if regions == "assumed":
             _, high = _assumed_region_bounds(sub, x)
@@ -1022,6 +1112,13 @@ def plot_pmp_diagnostic(
                 _add_rho_max_error_line(ax, sub, y_col)
         ax.set_title(rf"$p(M_{model[-1]}\mid y)$" if by_model else title or "")
         ax.set_xlabel(x_label)
+        _apply_axis_scales(
+            ax,
+            xscale=xscale,
+            yscale=yscale,
+            x_linthresh=x_linthresh,
+            y_linthresh=y_linthresh,
+        )
         ax.grid(alpha=0.2)
 
     if sharex and regions is None:
@@ -1060,6 +1157,10 @@ def plot_pmp_estimates_vs_distance(
     y: str = "estimate",
     x_min: float | None = None,
     output_dir: str | Path | None = FIGURE_DIR,
+    xscale: str = "linear",
+    yscale: str = "linear",
+    x_linthresh: float = 1.0,
+    y_linthresh: float = 0.05,
 ):
     if x not in {"distance", "log_distance", "logdistance"}:
         raise ValueError("x must be 'distance' or 'log_distance'")
@@ -1092,6 +1193,13 @@ def plot_pmp_estimates_vs_distance(
         ax.set_title(rf"$p(M_{model[-1]} \mid y)$")
         ax.set_xlim(x_min, x_max)
         ax.set_xlabel(rf"$\log d_{model[-1]}(y)$" if use_log else rf"$d_{model[-1]}(y)$")
+        _apply_axis_scales(
+            ax,
+            xscale=xscale,
+            yscale=yscale,
+            x_linthresh=x_linthresh,
+            y_linthresh=y_linthresh,
+        )
         ax.grid(alpha=0.25)
     axes[0].set_ylabel("Estimated PMP" if y == "estimate" else "Signed PMP error")
     _style_axes(axes)

@@ -3,7 +3,7 @@ import keras.utils as utils
 from math import pi
 from bayesflow.types import Tensor
 from .normal import normal_lcdf
-from .utils import log_sum_exp, log1m_exp
+from .utils import log1m_exp
 
 @utils.register_keras_serializable("bayesflow.utils")
 def wald_lpdf(x: Tensor, alpha: Tensor, nu: Tensor) -> Tensor:

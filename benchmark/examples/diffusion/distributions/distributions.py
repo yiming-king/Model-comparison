@@ -70,4 +70,5 @@ class Likelihood(Distribution):
         alpha = _alpha_by_trial(parameters, condition, self.model)
         nu = ops.exp(parameters[..., n_alpha : n_alpha + 2])
         tau = expit(parameters[..., n_alpha + 2])
-        return ops.sum(rdm_lpdf(rt=rt, alpha=alpha, nu=nu, tau=tau), axis=-1)
+        trial_log_prob = rdm_lpdf(rt=rt,alpha=alpha,nu=nu,tau=tau,)
+        return (ops.sum(trial_log_prob, axis=-1)+ ops.log1p(-tau[:, 0]))

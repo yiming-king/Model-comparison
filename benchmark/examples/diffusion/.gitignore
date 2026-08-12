@@ -1,0 +1,39 @@
+# OS, Python, and notebook caches
+.DS_Store
+._*
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Trained networks, training histories, and logs
+/approximators/trained/
+/approximators/history/
+/approximators/logs/
+
+# Generated analysis data and plots; keep Python source files in results/
+/results/**/*.csv
+/results/**/*.pkl
+/results/**/*.png
+/results/plots/
+/results/NPE_results/
+/results/posterior_diagnostics/
+
+# Optional PCA and posterior-predictive-check utilities and generated artifacts
+/results/summary_pca_check.py
+/results/summary_pca_check/
+/results/posterior_predictive_checks.py
+/results/posterior_predictive_checks/
+/results/plots/model_checks/
+/results/plots/posterior_predictive_checks/
+
+# Generated Stan fits and logs; keep .R and .stan source files
+/stan/results_4_models/
+/stan/logs_4_models/
+/stan/*.rds
+
+# Generated dataset exports
+/dataset/json/*.json
+
+# Well-specified calibration is deliberately isolated from observed-test outputs
+/calibration_outputs/
+/calibration_outputs_rerun1/

@@ -128,5 +128,7 @@ model {
     target += normal_lpdf(log_alpha | 0.0, 0.5);
     target += normal_lpdf(log_nu    | 0.0, 0.5);
     target += normal_lpdf(logit_tau | 0.0, 1.0);
+    
     target += total_log_lik;
+    target += log1m(tau);
 }

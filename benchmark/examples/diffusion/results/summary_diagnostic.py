@@ -1,3 +1,5 @@
+"""Summary-space reference fitting and diagnostics."""
+
 from __future__ import annotations
 
 import pickle
@@ -8,8 +10,11 @@ import numpy as np
 import pandas as pd
 from sklearn.covariance import LedoitWolf
 
-from ..config import DIAGNOSTIC_PATH, MODELS, MODEL_TITLES, REFERENCE_PATH
+from ..config import MODELS, MODEL_TITLES
 from .results import data_array, data_conditions
+
+
+REFERENCE_METRICS = ("l2", "linf", "mmd", "density")
 
 
 def summary_outputs(approximator, y) -> np.ndarray:
@@ -28,7 +33,8 @@ def summary_distance_from_summary(
     if metric == "l2":
         return np.linalg.norm(z, axis=1) / np.sqrt(dim)
     if metric == "linf":
-        return np.max(np.abs(z), axis=1) / np.sqrt(2.0 * np.log(dim))
+        scale = np.sqrt(2.0 * np.log(dim)) if dim > 1 else 1.0
+        return np.max(np.abs(z), axis=1) / scale
     raise ValueError("metric must be 'l2' or 'linf'")
 
 
@@ -44,7 +50,7 @@ def _rbf_kernel_mean(
     total = 0.0
     count = 0
     for start in range(0, len(x), chunk_size):
-        block = x[start:start + chunk_size]
+        block = x[start : start + chunk_size]
         dist2 = np.sum((block[:, None, :] - y[None, :, :]) ** 2, axis=-1)
         total += float(np.exp(-dist2 / (2.0 * bandwidth2)).sum())
         count += int(block.shape[0] * y.shape[0])
@@ -86,27 +92,28 @@ def mmd_reference_distance_from_summary(
     reference_kernel_mean: float | None = None,
     chunk_size: int = 512,
 ) -> np.ndarray:
-    """Biased RBF-MMD distance from each singleton summary to a reference summary bank.
-
-    This follows the MMD misspecification diagnostic setup where singleton observed
-    datasets are allowed by using the biased MMD² estimator and plotting/saving its
-    square root as the distance.
+    """Biased RBF-MMD distance.
+    using the biased MMD² estimator and
+    plotting/saving its square root as the distance.
     """
     summaries = np.atleast_2d(np.asarray(summaries, dtype=np.float64))
     reference_summary = np.atleast_2d(np.asarray(reference_summary, dtype=np.float64))
     bandwidth2 = max(float(bandwidth2), 1e-8)
     if reference_kernel_mean is None:
-        reference_kernel_mean = _rbf_kernel_mean(reference_summary, reference_summary, bandwidth2)
+        reference_kernel_mean = _rbf_kernel_mean(
+            reference_summary, reference_summary, bandwidth2
+        )
 
     distances = np.empty(len(summaries), dtype=np.float64)
     for start in range(0, len(summaries), chunk_size):
-        block = summaries[start:start + chunk_size]
-        dist2 = np.sum((block[:, None, :] - reference_summary[None, :, :]) ** 2, axis=-1)
+        block = summaries[start : start + chunk_size]
+        dist2 = np.sum(
+            (block[:, None, :] - reference_summary[None, :, :]) ** 2, axis=-1
+        )
         kxy_mean = np.exp(-dist2 / (2.0 * bandwidth2)).mean(axis=1)
         mmd2 = 1.0 + float(reference_kernel_mean) - 2.0 * kxy_mean
-        distances[start:start + len(block)] = np.sqrt(np.maximum(mmd2, 0.0))
+        distances[start : start + len(block)] = np.sqrt(np.maximum(mmd2, 0.0))
     return distances
-
 
 
 def squared_mmd_rbf_two_sample(
@@ -115,7 +122,7 @@ def squared_mmd_rbf_two_sample(
     max_samples: int = 512,
     seed: int = 2025,
 ) -> float:
-    """Biased two-sample RBF-MMD² with median-distance bandwidth."""
+    
     rng = np.random.default_rng(seed)
     x = np.asarray(x, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
@@ -138,38 +145,6 @@ def flow_summary_samples(flow, num_samples: int, seed: int = 2025) -> np.ndarray
     return np.asarray(samples["inference_variables"], dtype=np.float64)
 
 
-def c2st_accuracy(
-    x: np.ndarray,
-    y: np.ndarray,
-    test_size: float = 0.5,
-    seed: int = 2025,
-) -> float:
-    """Classifier two-sample test accuracy; 0.5 means hard to distinguish."""
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import accuracy_score
-    from sklearn.model_selection import train_test_split
-    from sklearn.pipeline import make_pipeline
-    from sklearn.preprocessing import StandardScaler
-
-    x = np.asarray(x, dtype=np.float64)
-    y = np.asarray(y, dtype=np.float64)
-    features = np.vstack([x, y])
-    labels = np.concatenate([np.zeros(len(x), dtype=int), np.ones(len(y), dtype=int)])
-    x_train, x_test, y_train, y_test = train_test_split(
-        features,
-        labels,
-        test_size=test_size,
-        random_state=seed,
-        stratify=labels,
-    )
-    classifier = make_pipeline(
-        StandardScaler(),
-        LogisticRegression(max_iter=1000, class_weight="balanced", random_state=seed),
-    )
-    classifier.fit(x_train, y_train)
-    return float(accuracy_score(y_test, classifier.predict(x_test)))
-
-
 def density_flow_validation(
     flow,
     heldout_summary: np.ndarray,
@@ -177,7 +152,6 @@ def density_flow_validation(
     max_mmd_samples: int = 512,
     seed: int = 2025,
 ) -> dict[str, float]:
-    """Compare held-out simulator summaries to generated flow summaries."""
     heldout_summary = np.asarray(heldout_summary, dtype=np.float64)
     num_flow_samples = int(num_flow_samples or len(heldout_summary))
     generated_summary = flow_summary_samples(flow, num_flow_samples, seed=seed)
@@ -192,13 +166,7 @@ def density_flow_validation(
         "density_validation_n_flow": int(len(generated_summary)),
         "density_validation_mmd2": float(mmd2),
         "density_validation_mmd": float(np.sqrt(max(mmd2, 0.0))),
-        "density_validation_c2st_accuracy": c2st_accuracy(
-            heldout_summary,
-            generated_summary,
-            seed=seed,
-        ),
     }
-
 
 
 def fit_typicality_flow(
@@ -299,62 +267,91 @@ def bootstrap_interval(
     rng = np.random.default_rng(seed)
     boot = rng.choice(distances, size=(n_boot, len(distances)), replace=True)
     qs = np.percentile(boot, [50, 100 * alpha / 2, 100 * (1 - alpha / 2)], axis=1)
-    return {"median": float(qs[0].mean()), "low": float(qs[1].mean()), "high": float(qs[2].mean())}
+    return {
+        "median": float(qs[0].mean()),
+        "low": float(qs[1].mean()),
+        "high": float(qs[2].mean()),
+    }
 
 
-def fit_reference(
+def fit_reference_suite(
     approximator,
     simulator,
+    metrics: tuple[str, ...] = REFERENCE_METRICS,
     n_fit: int = 2000,
     n_calibration: int = 2000,
     alpha: float = 0.1,
-    metric: str = "l2",
     n_boot: int = 1000,
     seed: int = 2025,
     density_epochs: int = 250,
     density_batch_size: int = 128,
     n_density_validation: int = 2000,
-) -> dict:
+) -> dict[str, dict]:
+    """Fit all requested references from one fit/calibration summary sample."""
+    unknown = set(metrics) - set(REFERENCE_METRICS)
+    if unknown:
+        raise ValueError(f"Unknown reference metrics: {sorted(unknown)}")
+
     fit_data = simulator.sample(n_fit)
     fit_summary = summary_outputs(approximator, _sim_to_array(fit_data))
+    calibration = simulator.sample(n_calibration)
+    calibration_summary = summary_outputs(approximator, _sim_to_array(calibration))
+    summary_dim = int(fit_summary.shape[1])
+    references = {}
 
-    if metric == "mmd":
+    covariance = None
+    if set(metrics) & {"l2", "linf"}:
+        covariance = LedoitWolf().fit(fit_summary)
+        mean = covariance.location_
+        chol = np.linalg.cholesky(covariance.covariance_)
+        for metric in set(metrics) & {"l2", "linf"}:
+            distances = summary_distance_from_summary(
+                calibration_summary, mean, chol, metric=metric
+            )
+            references[metric] = {
+                "mean": mean,
+                "chol": chol,
+                "summary_dim": summary_dim,
+                "metric": metric,
+                "alpha": alpha,
+                **bootstrap_interval(distances, alpha=alpha, n_boot=n_boot, seed=seed),
+            }
+
+    if "mmd" in metrics:
         bandwidth2 = mmd_rbf_bandwidth2(fit_summary, seed=seed)
         reference_kernel_mean = _rbf_kernel_mean(fit_summary, fit_summary, bandwidth2)
         reference = {
             "reference_summary": np.asarray(fit_summary, dtype=np.float64),
-            "summary_dim": int(fit_summary.shape[1]),
-            "metric": metric,
+            "summary_dim": summary_dim,
+            "metric": "mmd",
             "alpha": alpha,
             "bandwidth2": float(bandwidth2),
             "reference_kernel_mean": float(reference_kernel_mean),
         }
-
-        calibration = simulator.sample(n_calibration)
-        calibration_summary = summary_outputs(approximator, _sim_to_array(calibration))
         distances = mmd_reference_distance_from_summary(
             calibration_summary,
             reference["reference_summary"],
             reference["bandwidth2"],
             reference["reference_kernel_mean"],
         )
-        reference.update(bootstrap_interval(distances, alpha=alpha, n_boot=n_boot, seed=seed))
-        return reference
+        reference.update(
+            bootstrap_interval(distances, alpha=alpha, n_boot=n_boot, seed=seed)
+        )
+        references["mmd"] = reference
 
-    if metric == "typical":
+    if "density" in metrics:
         flow, history = fit_typicality_flow(
             fit_summary,
             epochs=density_epochs,
             batch_size=density_batch_size,
         )
-
-        calibration = simulator.sample(n_calibration)
-        calibration_summary = summary_outputs(approximator, _sim_to_array(calibration))
         calibration_log_q = typicality_log_density(flow, calibration_summary)
         expected_log_density = float(np.mean(calibration_log_q))
         calibration_typicality = calibration_log_q - expected_log_density
         typicality_low = float(np.percentile(calibration_typicality, 100 * alpha / 2))
-        typicality_high = float(np.percentile(calibration_typicality, 100 * (1 - alpha / 2)))
+        typicality_high = float(
+            np.percentile(calibration_typicality, 100 * (1 - alpha / 2))
+        )
         signed_reference_distance = -calibration_typicality
 
         validation = simulator.sample(n_density_validation)
@@ -368,8 +365,8 @@ def fit_reference(
 
         reference = {
             "flow": flow,
-            "summary_dim": int(fit_summary.shape[1]),
-            "metric": metric,
+            "summary_dim": summary_dim,
+            "metric": "density",
             "alpha": alpha,
             "expected_log_density": expected_log_density,
             "std_log_density": float(np.std(calibration_log_q)),
@@ -390,38 +387,20 @@ def fit_reference(
             },
             **validation_metrics,
         }
-        return reference
+        references["density"] = reference
 
-    if metric not in {"l2", "linf"}:
-        raise ValueError("metric must be 'l2', 'linf', 'mmd', or 'typical'")
-
-    covariance = LedoitWolf().fit(fit_summary)
-    reference = {
-        "mean": covariance.location_,
-        "chol": np.linalg.cholesky(covariance.covariance_),
-        "summary_dim": int(fit_summary.shape[1]),
-        "metric": metric,
-        "alpha": alpha,
-    }
-
-    calibration = simulator.sample(n_calibration)
-    calibration_summary = summary_outputs(approximator, _sim_to_array(calibration))
-    distances = summary_distance_from_summary(
-        calibration_summary,
-        reference["mean"],
-        reference["chol"],
-        metric=metric,
-    )
-    reference.update(bootstrap_interval(distances, alpha=alpha, n_boot=n_boot, seed=seed))
-    return reference
+    return {metric: references[metric] for metric in metrics}
 
 
-def fit_references(
+def fit_reference_suites(
     approximators: dict[str, object],
     simulators: dict[str, object],
     **kwargs,
-) -> dict[str, dict]:
-    return {model: fit_reference(approximators[model], simulators[model], **kwargs) for model in MODELS}
+) -> dict[str, dict[str, dict]]:
+    return {
+        model: fit_reference_suite(approximators[model], simulators[model], **kwargs)
+        for model in MODELS
+    }
 
 
 def distance_regime(distance: float, reference: dict) -> str:
@@ -432,19 +411,17 @@ def distance_regime(distance: float, reference: dict) -> str:
     return "in_distribution"
 
 
-def add_summary_diagnostics(
+def _diagnostics_from_summaries(
     frame: pd.DataFrame,
-    y,
-    approximators: dict[str, object],
+    summaries_by_model: dict[str, np.ndarray],
     references: dict[str, dict],
     eps: float = 1e-8,
 ) -> pd.DataFrame:
-    y = data_array(y)
     output = frame.copy()
     distances = {}
     ranking_distances = {}
     for model in MODELS:
-        summaries = summary_outputs(approximators[model], y)
+        summaries = summaries_by_model[model]
         ref = references[model]
         if ref["metric"] == "mmd":
             distances[model] = mmd_reference_distance_from_summary(
@@ -455,7 +432,7 @@ def add_summary_diagnostics(
             )
             ranking_distances[model] = distances[model]
             regimes = [distance_regime(d, ref) for d in distances[model]]
-        elif ref["metric"] == "typical":
+        elif ref["metric"] == "density":
             signed_typicality = signed_typicality_from_summary(
                 summaries,
                 ref["flow"],
@@ -473,13 +450,17 @@ def add_summary_diagnostics(
             output[f"typicality_low_{model}"] = ref["typicality_low"]
             output[f"typicality_high_{model}"] = ref["typicality_high"]
             output[f"typicality_tau_{model}"] = ref["typicality_tau"]
-            output[f"typicality_expected_log_density_{model}"] = ref["expected_log_density"]
+            output[f"typicality_expected_log_density_{model}"] = ref[
+                "expected_log_density"
+            ]
             regimes = [
                 typicality_regime(score, ref["typicality_low"], ref["typicality_high"])
                 for score in signed_typicality
             ]
         else:
-            distances[model] = summary_distance_from_summary(summaries, ref["mean"], ref["chol"], metric=ref["metric"])
+            distances[model] = summary_distance_from_summary(
+                summaries, ref["mean"], ref["chol"], metric=ref["metric"]
+            )
             ranking_distances[model] = distances[model]
             regimes = [distance_regime(d, ref) for d in distances[model]]
         output[f"d_{model}"] = distances[model]
@@ -493,12 +474,38 @@ def add_summary_diagnostics(
     output["closest_summary_model"] = [MODELS[i] for i in order[:, 0]]
     output["d_min"] = distance_matrix[np.arange(len(output)), order[:, 0]]
     output["d_second"] = distance_matrix[np.arange(len(output)), order[:, 1]]
-    output["summary_ambiguity_true"] = 1.0 / (np.abs(output["d_second"] - output["d_min"]) + eps)
-    output["globally_high_surprise"] = output[[f"regime_{m}" for m in MODELS]].eq("high surprise").all(axis=1)
+    output["summary_ambiguity_true"] = 1.0 / (
+        np.abs(output["d_second"] - output["d_min"]) + eps
+    )
+    output["globally_high_surprise"] = (
+        output[[f"regime_{m}" for m in MODELS]].eq("high surprise").all(axis=1)
+    )
     output["at_least_one_not_high_surprise"] = ~output["globally_high_surprise"]
-    output["summary_ambiguity"] = np.where(output["globally_high_surprise"], output["summary_ambiguity_true"], 0.0)
+    output["summary_ambiguity"] = np.where(
+        output["globally_high_surprise"], output["summary_ambiguity_true"], 0.0
+    )
     output["log1p_summary_ambiguity"] = np.log1p(output["summary_ambiguity"])
     return output
+
+
+def add_summary_diagnostic_suite(
+    frame: pd.DataFrame,
+    y,
+    approximators: dict[str, object],
+    reference_suites: dict[str, dict[str, dict]],
+    metrics: tuple[str, ...] = REFERENCE_METRICS,
+) -> dict[str, pd.DataFrame]:
+    """Evaluate every metric while computing observed summaries only once."""
+    y = data_array(y)
+    summaries = {model: summary_outputs(approximators[model], y) for model in MODELS}
+    return {
+        metric: _diagnostics_from_summaries(
+            frame,
+            summaries,
+            {model: reference_suites[model][metric] for model in MODELS},
+        )
+        for metric in metrics
+    }
 
 
 def pmp_diagnostic_frame(frame: pd.DataFrame) -> pd.DataFrame:
@@ -523,33 +530,16 @@ def pmp_diagnostic_frame(frame: pd.DataFrame) -> pd.DataFrame:
                     "summary_ambiguity_true": frame["summary_ambiguity_true"],
                     "log1p_summary_ambiguity": np.log1p(frame["summary_ambiguity"]),
                     "globally_high_surprise": frame["globally_high_surprise"],
-                    "at_least_one_not_high_surprise": frame["at_least_one_not_high_surprise"],
+                    "at_least_one_not_high_surprise": frame[
+                        "at_least_one_not_high_surprise"
+                    ],
                 }
             )
         )
     return pd.concat(rows, ignore_index=True)
 
 
-def logml_diagnostic_frame(frame: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-    for model in MODELS:
-        rows.append(
-            pd.DataFrame(
-                {
-                    "dataset": frame["dataset"],
-                    "id": frame["id"],
-                    "model": model,
-                    "model_title": MODEL_TITLES[model],
-                    "rho": frame[f"rho_{model}"],
-                    "rho_low": frame[f"dm_low_{model}"] / frame[f"dm_high_{model}"],
-                    "signed_logml_error": frame[f"signed_logml_error_{model}"],
-                }
-            )
-        )
-    return pd.concat(rows, ignore_index=True)
-
-
-def save_references(references: dict[str, dict], path: str | Path = REFERENCE_PATH) -> Path:
+def save_references(references: dict[str, dict], path: str | Path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as f:
@@ -557,20 +547,16 @@ def save_references(references: dict[str, dict], path: str | Path = REFERENCE_PA
     return path
 
 
-def load_references(path: str | Path = REFERENCE_PATH) -> dict[str, dict]:
+def load_references(path: str | Path) -> dict[str, dict]:
     with Path(path).open("rb") as f:
         return pickle.load(f)
 
 
-def save_diagnostic(frame: pd.DataFrame, path: str | Path = DIAGNOSTIC_PATH) -> Path:
+def save_diagnostic(frame: pd.DataFrame, path: str | Path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(path, index=False)
     return path
-
-
-def load_diagnostic(path: str | Path = DIAGNOSTIC_PATH) -> pd.DataFrame:
-    return pd.read_csv(path, keep_default_na=False)
 
 
 def _sim_to_array(samples: dict[str, np.ndarray]) -> np.ndarray:

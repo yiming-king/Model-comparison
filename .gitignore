@@ -38,4 +38,5 @@ build/
 
 # local tooling / workspace junk
 anaconda_projects/
-
+/outputs/
+/threshold_comparison_exports/

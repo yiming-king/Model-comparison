@@ -15,16 +15,12 @@ def log_sum_exp(x: Tensor, axis=-1) -> Tensor:
 
 @utils.register_keras_serializable("bayesflow.utils")
 def log1m_exp(x):
-    '''
-    Computes log(1 - exp(x))
-    '''
-    return ops.log1p(-ops.exp(x))
-    # x must be < 0 for log(1 - exp(x)) to be defined
+    """Compute log(1 - exp(x)) for x < 0."""
     log_half = ops.log(0.5)
     log_half = ops.cast(log_half, ops.dtype(x))
 
     return ops.where(
         x < log_half,
-        ops.log(-ops.expm1(x)),     # log(-(exp(x)-1)) stable when x is far from 0
-        ops.log1p(-ops.exp(x))      # log(1-exp(x)) stable when x ~ 0
+        ops.log1p(-ops.exp(x)),
+        ops.log(-ops.expm1(x)),
     )

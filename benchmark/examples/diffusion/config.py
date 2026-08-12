@@ -15,9 +15,6 @@ HISTORY_DIR = BASE_DIR / "approximators" / "history" / "indirect"
 LOG_DIR = BASE_DIR / "approximators" / "logs" / "indirect"
 RESULT_DIR = BASE_DIR / "results"
 FIGURE_DIR = RESULT_DIR / "plots"
-REFERENCE_PATH = RESULT_DIR / "npe_references.pkl"
-RESULTS_PATH = RESULT_DIR / "npe_4_models_results_gold.csv"
-DIAGNOSTIC_PATH = RESULT_DIR / "npe_4_models_empirical_diagnostic.csv"
 
 MODELS = ("m0", "m1", "m2", "m3")
 MODEL_TITLES = {
@@ -35,10 +32,11 @@ class TrainingConfig:
     epochs: int = 100
     batch_size: int = 64
     num_batches: int = 128
-    initial_learning_rate: float = 1e-3
-    clipvalue: float = 1.0
+
     summary_dim: int = 30
     summary_multiplier: int | None = None
+    summary_base_distribution: str | None = "normal"
+    run_suffix: str | None = None
 
     def summary_dim_for(self, model: str) -> int:
         if self.summary_multiplier is None:
@@ -48,8 +46,12 @@ class TrainingConfig:
     @property
     def summary_label(self) -> str:
         if self.summary_multiplier is not None:
-            return f"S{self.summary_multiplier}D"
-        return f"S{self.summary_dim}"
+            label = f"S{self.summary_multiplier}D"
+        else:
+            label = f"S{self.summary_dim}"
+        if self.run_suffix:
+            label = f"{label}_{self.run_suffix}"
+        return label
 
 
 def get_name(model: str, approximation: str = "NPE", summary_label: str = "S30") -> str:

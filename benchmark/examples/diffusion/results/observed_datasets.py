@@ -10,6 +10,7 @@ import pandas as pd
 from ..config import BASE_DIR
 from ..dataset import wagenmakers
 
+"load observed datasets, true parameters, and Stan posterior draws"
 
 OBSERVED_DATASETS = (
     "empirical",
@@ -32,12 +33,12 @@ def dataset_json_dir(dataset: str) -> Path:
     return BASE_DIR / "dataset" / "json" / dataset
 
 
-def load_observed_dataset(dataset: str) -> tuple[np.ndarray, list[str]]:
-    if dataset == "empirical":
-        return wagenmakers.df_array, wagenmakers.ids
-
-    folder = dataset_json_dir(dataset)
+def load_dataset_directory(folder: str | Path) -> tuple[np.ndarray, list[str]]:
+    """Load the common Stan-JSON dataset format from an arbitrary directory."""
+    folder = Path(folder)
     files = sorted(folder.glob("*.json"), key=_id_key)
+    if not files:
+        raise FileNotFoundError(f"No dataset JSON files found in {folder}")
     arrays = []
     ids = []
     for path in files:
@@ -48,6 +49,13 @@ def load_observed_dataset(dataset: str) -> tuple[np.ndarray, list[str]]:
     return np.asarray(arrays, dtype=np.float32), ids
 
 
+def load_observed_dataset(dataset: str) -> tuple[np.ndarray, list[str]]:
+    if dataset == "empirical":
+        return wagenmakers.df_array, wagenmakers.ids
+
+    return load_dataset_directory(dataset_json_dir(dataset))
+
+
 def load_true_parameters(dataset: str) -> pd.DataFrame | None:
     path = dataset_json_dir(dataset) / "true_parameters.csv"
     if not path.exists():
@@ -56,10 +64,20 @@ def load_true_parameters(dataset: str) -> pd.DataFrame | None:
 
 
 def posterior_draw_path(dataset: str, model: str, dataset_id: str) -> Path:
-    return BASE_DIR / "stan" / "results_4_models" / dataset / model / "posterior_draws" / f"{dataset_id}.csv"
+    return (
+        BASE_DIR
+        / "stan"
+        / "results_4_models"
+        / dataset
+        / model
+        / "posterior_draws"
+        / f"{dataset_id}.csv"
+    )
 
 
-def load_stan_posterior_draws(dataset: str, model: str, dataset_id: str) -> pd.DataFrame:
+def load_stan_posterior_draws(
+    dataset: str, model: str, dataset_id: str
+) -> pd.DataFrame:
     path = posterior_draw_path(dataset, model, dataset_id)
     if not path.exists():
         raise FileNotFoundError(f"Stan posterior draws not found: {path}")

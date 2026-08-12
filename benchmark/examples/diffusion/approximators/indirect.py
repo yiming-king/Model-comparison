@@ -41,19 +41,10 @@ def build_workflow(model: str, config: TrainingConfig = TrainingConfig()) -> bf.
         simulator=get_simulator(model),
         adapter=build_adapter(),
         inference_network=PosteriorNetwork(),
-        summary_network=SummaryNetwork(summary_dim=config.summary_dim_for(model)),
+        summary_network=SummaryNetwork(summary_dim=config.summary_dim_for(model),
+                                       base_distribution=config.summary_base_distribution),
         standardize="all",
     )
-
-
-def compile_workflow(workflow: bf.BasicWorkflow, config: TrainingConfig) -> None:
-    schedule = keras.optimizers.schedules.CosineDecay(
-        initial_learning_rate=config.initial_learning_rate,
-        decay_steps=config.epochs * config.num_batches,
-    )
-    optimizer = keras.optimizers.Adam(learning_rate=schedule, clipvalue=config.clipvalue)
-    workflow.approximator.compile(optimizer=optimizer)
-
 
 def load_approximator(model: str, config: TrainingConfig = TrainingConfig(), approximation: str = "NPE"):
     name = get_name(model, approximation, config.summary_label)
@@ -98,7 +89,7 @@ def train_approximator(
         return load_approximator(model, config=config), history
 
     workflow = build_workflow(model, config=config)
-    compile_workflow(workflow, config)
+
     history = workflow.fit_online(
         epochs=config.epochs,
         batch_size=config.batch_size,
@@ -145,6 +136,8 @@ if __name__ == "__main__":
     parser.add_argument("--summary-dim", type=int, default=default_config.summary_dim)
     parser.add_argument("--summary-multiplier", type=int, default=default_config.summary_multiplier)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--no-summary-mmd", action="store_true")
+    parser.add_argument("--run-suffix", type=str, default=None)
     args = parser.parse_args()
 
     config = TrainingConfig(
@@ -153,13 +146,23 @@ if __name__ == "__main__":
         num_batches=args.num_batches,
         summary_dim=args.summary_dim,
         summary_multiplier=args.summary_multiplier,
+        summary_base_distribution=(
+            None if args.no_summary_mmd else "normal"
+        ),
+        run_suffix=args.run_suffix,
     )
     train_approximators(config=config, overwrite=args.overwrite)
 
 
 # cd /Users/yimingzang/Documents/Project/benchmark2
 
-# KERAS_BACKEND=tensorflow MPLCONFIGDIR=/private/tmp/matplotlib \
-# /opt/anaconda3/envs/benchmark2/bin/python -m benchmark.examples.diffusion.approximators.indirect \
-#   --summary-multiplier 1 \
-#   --overwrite
+# KERAS_BACKEND=tensorflow \
+# MPLCONFIGDIR=/private/tmp/matplotlib \
+# /opt/anaconda3/envs/benchmark2/bin/python \
+# -m benchmark.examples.diffusion.approximators.indirect \
+# --summary-multiplier 4 \
+# --epochs 100 \
+# --batch-size 64 \
+# --num-batches 128 \
+# --no-summary-mmd \
+# --run-suffix noMMD

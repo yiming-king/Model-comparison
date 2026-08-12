@@ -84,7 +84,13 @@ def save_contaminated_datasets(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rng = np.random.default_rng(seed)
-    data = SIMULATORS[SOURCE_MODEL].sample(n_sim)
+    numpy_state = np.random.get_state()
+    try:
+        np.random.seed(seed)
+        data = SIMULATORS[SOURCE_MODEL].sample(n_sim)
+    finally:
+        np.random.set_state(numpy_state)
+        
     parameter_rows = []
 
     for i in range(n_sim):

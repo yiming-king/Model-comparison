@@ -32,6 +32,23 @@ Use the `benchmark2` environment:
 5. Merge the Stan bridge-sampling gold standard from `stan/results_4_models`.
 6. Compare summary surprise with logML/PMP errors.
 
+Well-specified threshold calibration has a separate entry point and output tree;
+the two Python files can be run directly from the project root:
+
+```bash
+# Compute or load the per-dataset NPE-MCMC posterior MMD, logML, and PMP errors.
+/opt/anaconda3/envs/benchmark2/bin/python \
+  benchmark/examples/diffusion/calibration/pipeline.py metrics
+
+# Rebuild all three 95% thresholds from the cached per-dataset metrics.
+/opt/anaconda3/envs/benchmark2/bin/python \
+  benchmark/examples/diffusion/calibration/thresholds.py
+```
+
+`pipeline.py metrics` writes `calibration_outputs/per_dataset_metrics.csv`.
+`thresholds.py` reads that file and writes `thresholds.csv` plus
+`per_dataset_results.csv`; it does not rerun NPE or MCMC.
+
 ## Intentional differences from Simon's original scripts
 
 - `approximators/indirect.py` uses BayesFlow 2's `BasicWorkflow`.

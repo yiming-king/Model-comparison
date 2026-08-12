@@ -1,3 +1,5 @@
+"""Estimate NPE model-comparison quantities and load Stan gold standards."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,9 +9,36 @@ import numpy as np
 import pandas as pd
 from scipy.special import logsumexp, softmax
 
-from ..config import BASE_DIR, MODELS, N_ALPHA, RESULTS_PATH
+from ..config import BASE_DIR, MODELS, N_ALPHA
 from ..dataset import wagenmakers
 from ..distributions import Likelihood, Prior
+
+
+def normalized_model_priors(
+    model_priors: dict[str, float] | None = None,
+) -> np.ndarray:
+    """Return validated model-prior probabilities in ``MODELS`` order."""
+    if model_priors is None:
+        return np.full(len(MODELS), 1.0 / len(MODELS), dtype=np.float64)
+    if set(model_priors) != set(MODELS):
+        raise ValueError(f"model_priors must define exactly {MODELS}")
+    priors = np.asarray([model_priors[model] for model in MODELS], dtype=np.float64)
+    if not np.isfinite(priors).all() or (priors <= 0.0).any():
+        raise ValueError("Every model prior must be finite and strictly positive")
+    return priors / priors.sum()
+
+
+def pmp_from_log_marginals(
+    log_marginals: np.ndarray,
+    model_priors: dict[str, float] | None = None,
+) -> np.ndarray:
+    """Compute PMPs from log marginal likelihoods and explicit model priors."""
+    log_marginals = np.asarray(log_marginals, dtype=np.float64)
+    if log_marginals.shape[-1] != len(MODELS):
+        raise ValueError(f"Expected {len(MODELS)} log marginal likelihoods")
+    return softmax(
+        log_marginals + np.log(normalized_model_priors(model_priors)), axis=-1
+    )
 
 
 def data_array(data=None) -> np.ndarray:
@@ -52,7 +81,9 @@ def parameter_dict(theta: np.ndarray, model: str) -> dict[str, np.ndarray]:
 
 
 def log_prior(theta: np.ndarray, model: str) -> np.ndarray:
-    value = Prior(model=model).log_prob(keras.ops.convert_to_tensor(theta), conditions=None)
+    value = Prior(model=model).log_prob(
+        keras.ops.convert_to_tensor(theta), conditions=None
+    )
     return np.asarray(keras.ops.convert_to_numpy(value), dtype=np.float64).reshape(-1)
 
 
@@ -122,7 +153,9 @@ def estimate_log_marginal(
         log_weights = (
             log_prior(theta, model)
             + log_likelihood(theta, y[i], model)
-            - posterior_log_prob(approximator, theta, y[i], model, batch_size=batch_size)
+            - posterior_log_prob(
+                approximator, theta, y[i], model, batch_size=batch_size
+            )
         )
         normalized = log_weights - logsumexp(log_weights)
         rows.append(
@@ -145,10 +178,15 @@ def estimate_model_comparison(
     num_samples: int = 1024,
     seed: int = 2025,
     batch_size: int | None = None,
+    model_priors: dict[str, float] | None = None,
 ) -> pd.DataFrame:
     y = data_array(y)
     if ids is None:
-        ids = wagenmakers.ids if dataset == "empirical" and y.shape[0] == len(wagenmakers.ids) else [f"s{i}" for i in range(y.shape[0])]
+        ids = (
+            wagenmakers.ids
+            if dataset == "empirical" and y.shape[0] == len(wagenmakers.ids)
+            else [f"s{i}" for i in range(y.shape[0])]
+        )
 
     output = pd.DataFrame({"row": np.arange(y.shape[0]), "dataset": dataset, "id": ids})
     log_ml_columns = []
@@ -172,13 +210,19 @@ def estimate_model_comparison(
         )
         log_ml_columns.append(f"log_ml_{model}")
 
-    pmp = softmax(output[log_ml_columns].to_numpy(dtype=np.float64), axis=1)
+    pmp = pmp_from_log_marginals(
+        output[log_ml_columns].to_numpy(dtype=np.float64), model_priors
+    )
     for i, model in enumerate(MODELS):
         output[f"pmp_{model}"] = pmp[:, i]
     return output.drop(columns="row")
 
 
-def load_gold_standard(path: str | Path | None = None, dataset: str = "empirical") -> pd.DataFrame:
+def load_gold_standard(
+    path: str | Path | None = None,
+    dataset: str = "empirical",
+    model_priors: dict[str, float] | None = None,
+) -> pd.DataFrame:
     if path is None:
         path = BASE_DIR / "stan" / "results_4_models" / dataset
     path = Path(path)
@@ -191,32 +235,45 @@ def load_gold_standard(path: str | Path | None = None, dataset: str = "empirical
         frames.append(frame)
 
     table = pd.concat(frames, ignore_index=True)
-    wide = table.pivot_table(index=["dataset", "id"], columns="model", values="estimate", aggfunc="first").reset_index()
+    wide = table.pivot_table(
+        index=["dataset", "id"], columns="model", values="estimate", aggfunc="first"
+    ).reset_index()
     wide = wide.rename(columns={model: f"gold_log_ml_{model}" for model in MODELS})
-    gold_logml = wide[[f"gold_log_ml_{model}" for model in MODELS]].to_numpy(dtype=np.float64)
-    gold_pmp = softmax(gold_logml, axis=1)
+    gold_logml = wide[[f"gold_log_ml_{model}" for model in MODELS]].to_numpy(
+        dtype=np.float64
+    )
+    gold_pmp = pmp_from_log_marginals(gold_logml, model_priors)
     for i, model in enumerate(MODELS):
         wide[f"gold_pmp_{model}"] = gold_pmp[:, i]
     return wide
 
 
-def attach_gold_standard(results: pd.DataFrame, gold: pd.DataFrame | None = None) -> pd.DataFrame:
+def attach_gold_standard(
+    results: pd.DataFrame, gold: pd.DataFrame | None = None
+) -> pd.DataFrame:
     if gold is None:
         gold = load_gold_standard()
     output = results.merge(gold, on=["dataset", "id"], how="left")
     for model in MODELS:
-        output[f"signed_logml_error_{model}"] = output[f"log_ml_{model}"] - output[f"gold_log_ml_{model}"]
-        output[f"signed_pmp_error_{model}"] = output[f"pmp_{model}"] - output[f"gold_pmp_{model}"]
+        output[f"signed_logml_error_{model}"] = (
+            output[f"log_ml_{model}"] - output[f"gold_log_ml_{model}"]
+        )
+        output[f"abs_logml_error_{model}"] = np.abs(
+            output[f"signed_logml_error_{model}"]
+        )
+        output[f"signed_pmp_error_{model}"] = (
+            output[f"pmp_{model}"] - output[f"gold_pmp_{model}"]
+        )
         output[f"abs_pmp_error_{model}"] = np.abs(output[f"signed_pmp_error_{model}"])
     return output
 
 
-def save_results(frame: pd.DataFrame, path: str | Path = RESULTS_PATH) -> Path:
+def save_results(frame: pd.DataFrame, path: str | Path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(path, index=False)
     return path
 
 
-def load_results(path: str | Path = RESULTS_PATH) -> pd.DataFrame:
+def load_results(path: str | Path) -> pd.DataFrame:
     return pd.read_csv(path, keep_default_na=False)
