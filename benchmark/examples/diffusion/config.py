@@ -17,6 +17,7 @@ RESULT_DIR = BASE_DIR / "results"
 FIGURE_DIR = RESULT_DIR / "plots"
 
 MODELS = ("m0", "m1", "m2", "m3")
+MODEL_LABELS = {model: model.upper() for model in MODELS}
 MODEL_TITLES = {
     "m0": "M0: common threshold",
     "m1": "M1: threshold by condition",
@@ -35,6 +36,7 @@ class TrainingConfig:
 
     summary_dim: int = 30
     summary_multiplier: int | None = None
+    embed_dim: int = 64
     summary_base_distribution: str | None = "normal"
     run_suffix: str | None = None
 

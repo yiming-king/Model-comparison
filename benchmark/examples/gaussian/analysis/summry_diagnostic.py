@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import copy
+import pickle
 from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", "/private/tmp/matplotlib")
@@ -15,33 +17,25 @@ from matplotlib.lines import Line2D
 from sklearn.covariance import LedoitWolf
 
 import benchmark.examples.gaussian.direct.calculator as BF
+from benchmark.examples.gaussian.config import (
+    ASSUMED_MODELS,
+    MODEL_SPECS,
+    RESULT_DIR as GAUSSIAN_RESULT_DIR,
+    SOURCE_MODELS,
+)
 
 
-RESULT_DIR = Path("/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/gaussian/results/ood")
+RESULT_DIR = GAUSSIAN_RESULT_DIR / "ood"
 FIGURE_DIR = RESULT_DIR / "figures"
-MODEL_SPECS = {
-    "m1": {"mu_prior_mean": 0.0, "mu_prior_std": 1.0, "likelihood_std": 1.0},
-    "m2": {"mu_prior_mean": 3.0, "mu_prior_std": 1.0, "likelihood_std": 1.0},
-    "m3": {"mu_prior_mean": 0.0, "mu_prior_std": 1.0, "likelihood_std": 3.0},
-    "m4": {"mu_prior_mean": 0.1, "mu_prior_std": 1.0, "likelihood_std": 1.0},
-    "m5": {"mu_prior_mean": 1.5, "mu_prior_std": 1.0, "likelihood_std": 1.0},
-    "m6": {"mu_prior_mean": 5.0, "mu_prior_std": 1.0, "likelihood_std": 1.0},
-    "m7": {"mu_prior_mean": 0.0, "mu_prior_std": 1.0, "likelihood_std": 5.0},
-    "m8": {"mu_prior_mean": 0.0, "mu_prior_std": 3.0, "likelihood_std": 1.0},
-    "m9": {"mu_prior_mean": 0.0, "mu_prior_std": 1.0, "likelihood_std": 0.1},
-    "m10": {"mu_prior_mean": 0.0, "mu_prior_std": 1.0, "likelihood_std": 0.01},
-    "m11": {"mu_prior_mean": 0.0, "mu_prior_std": 0.1, "likelihood_std": 1},
-    "m12": {"mu_prior_mean": 0.0, "mu_prior_std": 0.01, "likelihood_std": 1},
-
-}
-ASSUMED_MODELS = tuple(MODEL_SPECS)[:4]
-SOURCE_MODELS = tuple(MODEL_SPECS)
 SOURCE_COLORS = ("#F0E442", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00", "#0072B2", "#E011CF", "#999999", "#1F03EE", "#882255", "#44AA99",)
 TYPICAL_SET_FILL = "#DCEEDC"
 DEFAULT_DISTANCE_METRIC = "l2"
+REFERENCE_METRICS = ("l2", "linf", "mmd", "density")
 DIAGNOSTIC_XLABELS = {
     "l2": r"Diagnostic: $L_2$-based",
     "linf": r"Diagnostic: $L_\infty$-based",
+    "mmd": "Diagnostic: MMD-based",
+    "density": "Diagnostic: density-based",
 }
 NEAREST_TWO_CLASS_MARKERS = {
     "both extrapolative": ("o", 32),
@@ -73,6 +67,194 @@ def summary_outputs(approximator, x_batch: np.ndarray, obs_key: str = "x") -> np
     """Compute the standardized summary-network outputs used by the approximator."""
     z = approximator.summarize({obs_key: np.asarray(x_batch, dtype=np.float32)})
     return np.asarray(keras.ops.convert_to_numpy(z), dtype=np.float64)
+
+
+def _rbf_kernel_mean(
+    x: np.ndarray,
+    y: np.ndarray,
+    bandwidth2: float,
+    chunk_size: int = 512,
+) -> float:
+    """Return the mean RBF kernel value without materializing all x/y pairs."""
+    x = np.atleast_2d(np.asarray(x, dtype=np.float64))
+    y = np.atleast_2d(np.asarray(y, dtype=np.float64))
+    bandwidth2 = max(float(bandwidth2), 1e-8)
+    total = 0.0
+    count = 0
+    for start in range(0, len(x), chunk_size):
+        block = x[start : start + chunk_size]
+        dist2 = np.sum((block[:, None, :] - y[None, :, :]) ** 2, axis=-1)
+        total += float(np.exp(-dist2 / (2.0 * bandwidth2)).sum())
+        count += int(block.shape[0] * y.shape[0])
+    return total / count
+
+
+def mmd_rbf_bandwidth2(
+    samples: np.ndarray,
+    max_pairs: int = 500_000,
+    seed: int = 2025,
+) -> float:
+    """Median positive squared-distance bandwidth used by the diffusion case study."""
+    samples = np.atleast_2d(np.asarray(samples, dtype=np.float64))
+    n = len(samples)
+    if n < 2:
+        return 1.0
+    rng = np.random.default_rng(seed)
+    total_pairs = n * (n - 1) // 2
+    if total_pairs <= max_pairs:
+        diff = samples[:, None, :] - samples[None, :, :]
+        dist2 = np.sum(diff * diff, axis=-1)
+        positive = dist2[dist2 > 0.0]
+    else:
+        i = rng.integers(0, n, size=max_pairs)
+        j = rng.integers(0, n - 1, size=max_pairs)
+        j = j + (j >= i)
+        diff = samples[i] - samples[j]
+        positive = np.sum(diff * diff, axis=-1)
+    if len(positive) == 0:
+        return 1.0
+    return max(float(np.median(positive)), 1e-8)
+
+
+def mmd_reference_distance_from_summary(
+    summaries: np.ndarray,
+    reference_summary: np.ndarray,
+    bandwidth2: float,
+    reference_kernel_mean: float | None = None,
+    chunk_size: int = 512,
+) -> np.ndarray:
+    """Biased RBF-MMD distance from each summary point to the reference law."""
+    summaries = np.atleast_2d(np.asarray(summaries, dtype=np.float64))
+    reference_summary = np.atleast_2d(
+        np.asarray(reference_summary, dtype=np.float64)
+    )
+    bandwidth2 = max(float(bandwidth2), 1e-8)
+    if reference_kernel_mean is None:
+        reference_kernel_mean = _rbf_kernel_mean(
+            reference_summary, reference_summary, bandwidth2
+        )
+    distances = np.empty(len(summaries), dtype=np.float64)
+    for start in range(0, len(summaries), chunk_size):
+        block = summaries[start : start + chunk_size]
+        dist2 = np.sum(
+            (block[:, None, :] - reference_summary[None, :, :]) ** 2,
+            axis=-1,
+        )
+        kxy_mean = np.exp(-dist2 / (2.0 * bandwidth2)).mean(axis=1)
+        mmd2 = 1.0 + float(reference_kernel_mean) - 2.0 * kxy_mean
+        distances[start : start + len(block)] = np.sqrt(np.maximum(mmd2, 0.0))
+    return distances
+
+
+def squared_mmd_rbf_two_sample(
+    x: np.ndarray,
+    y: np.ndarray,
+    max_samples: int = 512,
+    seed: int = 2025,
+) -> float:
+    """Small validation MMD used to check a fitted density flow."""
+    rng = np.random.default_rng(seed)
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    if len(x) > max_samples:
+        x = x[rng.choice(len(x), size=max_samples, replace=False)]
+    if len(y) > max_samples:
+        y = y[rng.choice(len(y), size=max_samples, replace=False)]
+    bandwidth2 = mmd_rbf_bandwidth2(np.vstack([x, y]), seed=seed)
+    return float(
+        _rbf_kernel_mean(x, x, bandwidth2)
+        + _rbf_kernel_mean(y, y, bandwidth2)
+        - 2.0 * _rbf_kernel_mean(x, y, bandwidth2)
+    )
+
+
+def fit_typicality_flow(
+    summaries: np.ndarray,
+    epochs: int = 250,
+    batch_size: int = 128,
+    depth: int = 6,
+    widths: tuple[int, ...] = (256, 256),
+    learning_rate: float = 5e-4,
+    patience: int = 20,
+    start_from_epoch: int = 50,
+):
+    """Fit q_phi(z) to well-specified summary outputs."""
+    import bayesflow as bf
+
+    summaries = np.asarray(summaries, dtype=np.float32)
+    dataset = bf.datasets.OfflineDataset(
+        data={"z": summaries},
+        batch_size=batch_size,
+        adapter=bf.Adapter().rename("z", "inference_variables"),
+    )
+    flow = bf.approximators.ContinuousApproximator(
+        inference_network=bf.networks.CouplingFlow(
+            depth=depth,
+            subnet_kwargs={"widths": widths, "activation": "mish", "norm": "layer"},
+        ),
+    )
+    schedule = keras.optimizers.schedules.CosineDecay(
+        initial_learning_rate=learning_rate,
+        decay_steps=max(1, epochs * dataset.num_batches),
+        alpha=1e-6,
+    )
+    callbacks = [
+        keras.callbacks.EarlyStopping(
+            monitor="loss",
+            patience=patience,
+            start_from_epoch=start_from_epoch,
+            restore_best_weights=True,
+            verbose=1,
+        )
+    ]
+    flow.compile(keras.optimizers.Adam(learning_rate=schedule))
+    history = flow.fit(dataset=dataset, epochs=epochs, callbacks=callbacks)
+    return flow, history
+
+
+def typicality_log_density(flow, summaries: np.ndarray) -> np.ndarray:
+    summaries = np.asarray(summaries, dtype=np.float32)
+    tensor = keras.ops.convert_to_tensor(summaries)
+    standardized = flow.standardizer.maybe_standardize(
+        tensor, key="inference_variables", stage="inference"
+    )
+    _, log_q = flow.inference_network(standardized, density=True, training=False)
+    return np.asarray(keras.ops.convert_to_numpy(log_q), dtype=np.float64).reshape(-1)
+
+
+def flow_summary_samples(flow, num_samples: int, seed: int = 2025) -> np.ndarray:
+    samples = flow.sample(num_samples=num_samples, seed=seed)
+    return np.asarray(samples["inference_variables"], dtype=np.float64)
+
+
+def density_flow_validation(
+    flow,
+    heldout_summary: np.ndarray,
+    num_flow_samples: int | None = None,
+    max_mmd_samples: int = 512,
+    seed: int = 2025,
+) -> dict[str, float]:
+    heldout_summary = np.asarray(heldout_summary, dtype=np.float64)
+    generated = flow_summary_samples(
+        flow, int(num_flow_samples or len(heldout_summary)), seed=seed
+    )
+    mmd2 = squared_mmd_rbf_two_sample(
+        heldout_summary, generated, max_samples=max_mmd_samples, seed=seed
+    )
+    return {
+        "density_validation_n_simulator": int(len(heldout_summary)),
+        "density_validation_n_flow": int(len(generated)),
+        "density_validation_mmd2": float(mmd2),
+        "density_validation_mmd": float(np.sqrt(max(mmd2, 0.0))),
+    }
+
+
+def signed_typicality_from_summary(
+    summaries: np.ndarray,
+    flow,
+    expected_log_density: float,
+) -> np.ndarray:
+    return typicality_log_density(flow, summaries) - float(expected_log_density)
 
 
 def fit_reference(
@@ -134,6 +316,158 @@ def bootstrap_reference_stats(
     return {"median": float(qs[0].mean()), "dm_low": float(qs[1].mean()), "dm_high": float(qs[2].mean())}
 
 
+def fit_reference_suite(
+    approximator,
+    simulator,
+    metrics: tuple[str, ...] = REFERENCE_METRICS,
+    n_fit: int = 2000,
+    n_calibration: int = 2000,
+    alpha: float = 0.1,
+    n_boot: int = 1000,
+    seed: int = 2025,
+    density_epochs: int = 250,
+    density_batch_size: int = 128,
+    n_density_validation: int = 2000,
+) -> dict[str, dict]:
+    """Fit l2, linf, MMD, and density references from shared summary samples."""
+    metrics = tuple(metric.lower() for metric in metrics)
+    unknown = set(metrics).difference(REFERENCE_METRICS)
+    if unknown:
+        raise ValueError(f"Unknown reference metrics: {sorted(unknown)}")
+    if n_fit <= 1 or n_calibration <= 1:
+        raise ValueError("n_fit and n_calibration must both be greater than one")
+
+    fit_summary = summary_outputs(approximator, simulator.sample(n_fit)["x"])
+    calibration_summary = summary_outputs(
+        approximator, simulator.sample(n_calibration)["x"]
+    )
+    summary_dim = int(fit_summary.shape[1])
+    references: dict[str, dict] = {}
+
+    if set(metrics) & {"l2", "linf"}:
+        covariance = LedoitWolf().fit(fit_summary)
+        mean = covariance.location_
+        chol = np.linalg.cholesky(covariance.covariance_)
+        for metric in metrics:
+            if metric not in {"l2", "linf"}:
+                continue
+            distances = summary_distance_from_summary(
+                calibration_summary, mean, chol, metric=metric
+            )
+            references[metric] = {
+                "distance_metric": metric,
+                "metric": metric,
+                "summary_dim": summary_dim,
+                "mu_hat": mean,
+                "L_hat": chol,
+                "alpha": alpha,
+                **bootstrap_reference_stats(
+                    distances, alpha=alpha, n_boot=n_boot, seed=seed
+                ),
+            }
+
+    if "mmd" in metrics:
+        bandwidth2 = mmd_rbf_bandwidth2(fit_summary, seed=seed)
+        kernel_mean = _rbf_kernel_mean(fit_summary, fit_summary, bandwidth2)
+        distances = mmd_reference_distance_from_summary(
+            calibration_summary, fit_summary, bandwidth2, kernel_mean
+        )
+        references["mmd"] = {
+            "distance_metric": "mmd",
+            "metric": "mmd",
+            "summary_dim": summary_dim,
+            "reference_summary": np.asarray(fit_summary, dtype=np.float64),
+            "bandwidth2": float(bandwidth2),
+            "reference_kernel_mean": float(kernel_mean),
+            "alpha": alpha,
+            **bootstrap_reference_stats(
+                distances, alpha=alpha, n_boot=n_boot, seed=seed
+            ),
+        }
+
+    if "density" in metrics:
+        flow, history = fit_typicality_flow(
+            fit_summary, epochs=density_epochs, batch_size=density_batch_size
+        )
+        calibration_log_q = typicality_log_density(flow, calibration_summary)
+        expected_log_density = float(np.mean(calibration_log_q))
+        calibration_typicality = calibration_log_q - expected_log_density
+        signed_surprise_distance = -calibration_typicality
+        stats = {
+            "median": float(np.median(signed_surprise_distance)),
+            "dm_low": float(
+                np.percentile(signed_surprise_distance, 100 * alpha / 2)
+            ),
+            "dm_high": float(
+                np.percentile(signed_surprise_distance, 100 * (1 - alpha / 2))
+            ),
+        }
+        validation_summary = summary_outputs(
+            approximator, simulator.sample(n_density_validation)["x"]
+        )
+        references["density"] = {
+            "distance_metric": "density",
+            "metric": "density",
+            "summary_dim": summary_dim,
+            "flow": flow,
+            "expected_log_density": expected_log_density,
+            "std_log_density": float(np.std(calibration_log_q)),
+            "typicality_low": float(-stats["dm_high"]),
+            "typicality_high": float(-stats["dm_low"]),
+            "typicality_tau": float(
+                max(abs(stats["dm_low"]), abs(stats["dm_high"]))
+            ),
+            "alpha": alpha,
+            "density_epochs": int(density_epochs),
+            "density_batch_size": int(density_batch_size),
+            "density_validation_samples": int(n_density_validation),
+            "density_training_history": {
+                key: [float(value) for value in values]
+                for key, values in getattr(history, "history", {}).items()
+            },
+            **stats,
+            **density_flow_validation(
+                flow,
+                validation_summary,
+                num_flow_samples=n_density_validation,
+                seed=seed,
+            ),
+        }
+
+    return {metric: references[metric] for metric in metrics}
+
+
+def fit_summary_reference_suites(
+    approximators: dict[str, object],
+    simulators: dict[str, object],
+    assumed_models: tuple[str, ...] = ASSUMED_MODELS,
+    **kwargs,
+) -> dict[str, dict[str, dict]]:
+    """Fit a complete diagnostic reference suite for every assumed model."""
+    return {
+        model: fit_reference_suite(
+            approximators[model],
+            simulators[model],
+            seed=int(kwargs.get("seed", 2025)) + index,
+            **{key: value for key, value in kwargs.items() if key != "seed"},
+        )
+        for index, model in enumerate(assumed_models)
+    }
+
+
+def save_reference_suites(references: dict, path: str | Path) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as file:
+        pickle.dump(references, file)
+    return path
+
+
+def load_reference_suites(path: str | Path) -> dict:
+    with Path(path).open("rb") as file:
+        return pickle.load(file)
+
+
 
 
 def summary_distance_from_summary(
@@ -149,7 +483,8 @@ def summary_distance_from_summary(
     if metric == "l2":
         return np.linalg.norm(whitened, axis=1) / np.sqrt(summary_dim)
     if metric == "linf":
-        return np.max(np.abs(whitened), axis=1) / np.sqrt(2 * np.log(summary_dim))
+        scale = np.sqrt(2 * np.log(summary_dim)) if summary_dim > 1 else 1.0
+        return np.max(np.abs(whitened), axis=1) / scale
     raise ValueError("distance_metric must be 'l2' or 'linf'")
 
 
@@ -161,11 +496,25 @@ def summary_distance_from_obs(
     """Compute summary-space distances for observation datasets."""
     x_batch = stack_obs(x_batch)
     S = summary_outputs(approximator, x_batch)
+    metric = reference.get(
+        "metric", reference.get("distance_metric", DEFAULT_DISTANCE_METRIC)
+    ).lower()
+    if metric == "mmd":
+        return mmd_reference_distance_from_summary(
+            S,
+            reference["reference_summary"],
+            reference["bandwidth2"],
+            reference.get("reference_kernel_mean"),
+        )
+    if metric == "density":
+        return -signed_typicality_from_summary(
+            S, reference["flow"], reference["expected_log_density"]
+        )
     return summary_distance_from_summary(
         S,
         reference["mu_hat"],
         reference["L_hat"],
-        metric=reference.get("distance_metric", DEFAULT_DISTANCE_METRIC),
+        metric=metric,
     )
 
 
@@ -227,6 +576,23 @@ def fit_summary_references(
     n_boot: int = 1000,
     bootstrap_seed: int = 2025,
 ) -> dict[str, dict]:
+    distance_metric = distance_metric.lower()
+    if distance_metric not in REFERENCE_METRICS:
+        raise ValueError(f"distance_metric must be one of {REFERENCE_METRICS}")
+    if distance_metric in {"mmd", "density"}:
+        return {
+            model: fit_reference_suite(
+                approximators[model],
+                simulators[model],
+                metrics=(distance_metric,),
+                n_fit=n_ref,
+                n_calibration=n_ref,
+                alpha=alpha,
+                n_boot=n_boot,
+                seed=bootstrap_seed + index,
+            )[distance_metric]
+            for index, model in enumerate(assumed_models)
+        }
     return {
         m: fit_reference(
             approximators[m],
@@ -242,11 +608,82 @@ def fit_summary_references(
 
 
 def distance_regime(distance: float, reference: dict) -> str:
-    if distance < reference["dm_low"]:
+    low = reference.get("dm_low", reference.get("low"))
+    high = reference.get("dm_high", reference.get("high"))
+    if low is None or high is None:
+        raise KeyError("reference must contain dm_low/dm_high or low/high")
+    if distance < low:
         return "interpolation"
-    if distance > reference["dm_high"]:
+    if distance > high:
         return "extrapolation"
     return "in_distribution"
+
+
+def _ranking_distance(distances: np.ndarray, reference: dict) -> np.ndarray:
+    """Use calibrated interval exceedance for the signed density diagnostic."""
+    metric = reference.get(
+        "metric", reference.get("distance_metric", DEFAULT_DISTANCE_METRIC)
+    )
+    distances = np.asarray(distances, dtype=float)
+    if metric != "density":
+        return distances
+    return np.maximum(
+        float(reference["dm_low"]) - distances,
+        distances - float(reference["dm_high"]),
+    ).clip(min=0.0)
+
+
+def _add_precomputed_distances_and_regimes(
+    datasets: dict[str, list[dict]],
+    distances_by_source: dict[str, dict[str, np.ndarray]],
+    references: dict[str, dict],
+    sources: tuple[str, ...],
+    assumed_models: tuple[str, ...],
+    eps: float,
+) -> dict[str, list[dict]]:
+    for source in sources:
+        distances = distances_by_source[source]
+        for i, item in enumerate(datasets[source]):
+            d_vec = np.array([distances[m][i] for m in assumed_models], dtype=float)
+            ranking_vec = np.array(
+                [
+                    _ranking_distance(np.asarray([d_vec[j]]), references[m])[0]
+                    for j, m in enumerate(assumed_models)
+                ],
+                dtype=float,
+            )
+            regimes = {
+                m: distance_regime(d_vec[j], references[m])
+                for j, m in enumerate(assumed_models)
+            }
+            order = np.argsort(ranking_vec, kind="stable")
+            all_extra = all(v == "extrapolation" for v in regimes.values())
+            item["summary_distances"] = {
+                m: float(d_vec[j]) for j, m in enumerate(assumed_models)
+            }
+            item["summary_regimes"] = regimes
+            item["summary_ci"] = {
+                m: {
+                    "median": float(references[m]["median"]),
+                    "low": float(references[m]["dm_low"]),
+                    "high": float(references[m]["dm_high"]),
+                }
+                for m in assumed_models
+            }
+            item["globally_extrapolative"] = bool(all_extra)
+            item["at_least_one_not_extrapolative"] = not all_extra
+            item["closest_summary_models"] = [
+                assumed_models[j] for j in order[:2]
+            ]
+            item["d_min"] = float(ranking_vec[order[0]])
+            item["d_second"] = float(ranking_vec[order[1]])
+            item["ambiguity_score_true"] = float(
+                1.0 / (abs(ranking_vec[order[1]] - ranking_vec[order[0]]) + eps)
+            )
+            item["ambiguity_score"] = (
+                item["ambiguity_score_true"] if all_extra else 0.0
+            )
+    return datasets
 
 
 def add_distances_and_regimes(
@@ -257,25 +694,89 @@ def add_distances_and_regimes(
     assumed_models: tuple[str, ...] = ASSUMED_MODELS,
     eps: float = 1e-8,
 ) -> dict[str, list[dict]]:
+    distances_by_source = {}
     for source in sources:
         x_batch = stack_obs(datasets[source])
-        distances = {m: summary_distance_from_obs(approximators[m], x_batch, references[m]) for m in assumed_models}
-        for i, item in enumerate(datasets[source]):
-            d_vec = np.array([distances[m][i] for m in assumed_models], dtype=float)
-            regimes = {m: distance_regime(d_vec[j], references[m]) for j, m in enumerate(assumed_models)}
-            order = np.argsort(d_vec)
-            all_extra = all(v == "extrapolation" for v in regimes.values())
-            item["summary_distances"] = {m: float(d_vec[j]) for j, m in enumerate(assumed_models)}
-            item["summary_regimes"] = regimes
-            item["summary_ci"] = {m: {"low": float(references[m]["dm_low"]), "high": float(references[m]["dm_high"])} for m in assumed_models}
-            item["globally_extrapolative"] = bool(all_extra)
-            item["at_least_one_not_extrapolative"] = not all_extra
-            item["closest_summary_models"] = [assumed_models[j] for j in order[:2]]
-            item["d_min"] = float(d_vec[order[0]])
-            item["d_second"] = float(d_vec[order[1]])
-            item["ambiguity_score_true"] = float(1.0 / (abs(d_vec[order[1]] - d_vec[order[0]]) + eps))
-            item["ambiguity_score"] = item["ambiguity_score_true"] if all_extra else 0.0
-    return datasets
+        distances_by_source[source] = {
+            model: summary_distance_from_obs(
+                approximators[model], x_batch, references[model]
+            )
+            for model in assumed_models
+        }
+    return _add_precomputed_distances_and_regimes(
+        datasets,
+        distances_by_source,
+        references,
+        sources,
+        assumed_models,
+        eps,
+    )
+
+
+def add_summary_diagnostic_suite(
+    datasets: dict[str, list[dict]],
+    approximators: dict[str, object],
+    reference_suites: dict[str, dict[str, dict]],
+    metrics: tuple[str, ...] = REFERENCE_METRICS,
+    sources: tuple[str, ...] = SOURCE_MODELS,
+    assumed_models: tuple[str, ...] = ASSUMED_MODELS,
+    eps: float = 1e-8,
+) -> dict[str, dict[str, list[dict]]]:
+    """Evaluate several diagnostics while computing each model summary only once."""
+    unknown = set(metrics).difference(REFERENCE_METRICS)
+    if unknown:
+        raise ValueError(f"Unknown diagnostic metrics: {sorted(unknown)}")
+    summaries = {
+        source: {
+            model: summary_outputs(approximators[model], stack_obs(datasets[source]))
+            for model in assumed_models
+        }
+        for source in sources
+    }
+    output = {}
+    for metric in metrics:
+        references = {
+            model: reference_suites[model][metric] for model in assumed_models
+        }
+        distances_by_source = {}
+        for source in sources:
+            distances_by_source[source] = {}
+            for model in assumed_models:
+                reference = references[model]
+                summary = summaries[source][model]
+                if metric == "mmd":
+                    distance = mmd_reference_distance_from_summary(
+                        summary,
+                        reference["reference_summary"],
+                        reference["bandwidth2"],
+                        reference.get("reference_kernel_mean"),
+                    )
+                elif metric == "density":
+                    distance = -signed_typicality_from_summary(
+                        summary,
+                        reference["flow"],
+                        reference["expected_log_density"],
+                    )
+                else:
+                    distance = summary_distance_from_summary(
+                        summary,
+                        reference["mu_hat"],
+                        reference["L_hat"],
+                        metric=metric,
+                    )
+                distances_by_source[source][model] = distance
+        metric_datasets = {
+            source: [copy.copy(item) for item in datasets[source]] for source in sources
+        }
+        output[metric] = _add_precomputed_distances_and_regimes(
+            metric_datasets,
+            distances_by_source,
+            references,
+            sources,
+            assumed_models,
+            eps,
+        )
+    return output
 
 
 def collect_logml_distance_frame(
@@ -294,6 +795,7 @@ def collect_logml_distance_frame(
                     "id": int(item["id"]),
                     "assumed_model": assumed,
                     "d_M": float(item["summary_distances"][assumed]),
+                    "dm_median": float(item["summary_ci"][assumed]["median"]),
                     "dm_low": float(item["summary_ci"][assumed]["low"]),
                     "dm_high": float(item["summary_ci"][assumed]["high"]),
                     "distance_regime": item["summary_regimes"][assumed],
@@ -328,6 +830,7 @@ def collect_posterior_distance_frame(
                     "id": int(item["id"]),
                     "assumed_model": assumed,
                     "d_M": float(item["summary_distances"][assumed]),
+                    "dm_median": float(item["summary_ci"][assumed]["median"]),
                     "dm_low": float(item["summary_ci"][assumed]["low"]),
                     "dm_high": float(item["summary_ci"][assumed]["high"]),
                     "distance_regime": item["summary_regimes"][assumed],
@@ -370,6 +873,7 @@ def collect_pmp_ambiguity_frame(
             for j, assumed in enumerate(assumed_models):
                 regime = item["summary_regimes"][assumed]
                 row[f"d_{assumed}"] = float(item["summary_distances"][assumed])
+                row[f"dm_median_{assumed}"] = float(item["summary_ci"][assumed]["median"])
                 row[f"dm_low_{assumed}"] = float(item["summary_ci"][assumed]["low"])
                 row[f"dm_high_{assumed}"] = float(item["summary_ci"][assumed]["high"])
                 row[f"regime_{assumed}"] = regime
@@ -396,10 +900,19 @@ def summarize_frames(logml_df: pd.DataFrame, pmp_df: pd.DataFrame) -> tuple[pd.D
     return logml_summary, pmp_summary
 
 
-def _add_distance_regions(ax, low: float, high: float, x_max: float, x_min: float = 0.0) -> None:
-    """Highlight only the calibrated typical set; leave both tails unshaded."""
+def _add_distance_regions(
+    ax,
+    low: float,
+    high: float,
+    x_max: float,
+    x_min: float = 0.0,
+    y_bounds: tuple[float, float] | None = None,
+) -> None:
+    """Highlight the calibrated diagnostic interval and optional error band."""
     del x_min, x_max  # Retained in the signature for compatibility with older notebooks.
     ax.axvspan(low, high, color=TYPICAL_SET_FILL, alpha=0.70, zorder=0)
+    if y_bounds is not None:
+        ax.axhspan(*y_bounds, color=TYPICAL_SET_FILL, alpha=0.70, zorder=0)
     ax.axvline(low, color="0.45", linestyle=":", linewidth=0.9, zorder=1)
     ax.axvline(high, color="0.25", linestyle="--", linewidth=0.9, zorder=1)
 
@@ -439,6 +952,46 @@ def _error_subset_data(data: pd.DataFrame, subset: str | None) -> pd.DataFrame:
 
 def _safe_log(x) -> np.ndarray:
     return np.log(np.maximum(np.asarray(x, dtype=float), 1e-12))
+
+
+def _normalize_distance(x, median, high):
+    return (x - median) / (high - median)
+
+
+def _normalize_signed_error(x, median, low, high):
+    """Map a signed-error median to 0 and its lower/upper bounds to -1/+1."""
+    values = np.asarray(x, dtype=float)
+    centers = np.asarray(median, dtype=float)
+    lower = np.asarray(low, dtype=float)
+    upper = np.asarray(high, dtype=float)
+    lower_scale = centers - lower
+    upper_scale = upper - centers
+    if np.any(lower_scale <= 0.0) or np.any(upper_scale <= 0.0):
+        raise ValueError("Signed-error median must lie strictly between its bounds")
+    return np.where(
+        values < centers,
+        (values - centers) / lower_scale,
+        (values - centers) / upper_scale,
+    )
+
+
+def _error_median(
+    data: pd.DataFrame,
+    value_column: str,
+    model: str,
+    supplied: float | dict[str, float] | None,
+) -> float:
+    """Use an explicit calibration median, or infer it from well-specified rows."""
+    if isinstance(supplied, dict):
+        return float(supplied[model])
+    if supplied is not None:
+        return float(supplied)
+    values = pd.to_numeric(
+        data.loc[data["source_model"].eq(model), value_column], errors="coerce"
+    ).dropna()
+    if values.empty:
+        raise ValueError(f"No well-specified {value_column} values for {model}")
+    return float(values.median())
 
 
 def _style_axes(axes) -> None:
@@ -533,6 +1086,7 @@ def plot_logml_error_vs_distance(
     assumed_models: tuple[str, ...] = ASSUMED_MODELS,
     x: str = "rho",
     error_bound: float | None = None,
+    error_median: float | dict[str, float] | None = None,
     x_min: float | None = None,
     filename: str | None = None,
     distance_metric: str | None = None,
@@ -561,10 +1115,44 @@ def plot_logml_error_vs_distance(
 
     for ax, assumed in zip(axes, assumed_models, strict=False):
         sub = logml_df[logml_df["assumed_model"] == assumed].copy()
+        normalized_error = error_bound is not None
+        calibrated_columns = {
+            "signed_logml_error_lower_threshold",
+            "signed_logml_error_threshold",
+        }
+        calibrated_error = (
+            not normalized_error
+            and calibrated_columns.issubset(sub.columns)
+        )
+        y_col = "_log10_signed_logml_error"
+        sub[y_col] = sub["signed_logml_error"] / np.log(10.0)
+        error_low = error_high = None
+        if normalized_error:
+            median = _error_median(
+                sub, "signed_logml_error", assumed, error_median
+            )
+            y_col = "_normalized_signed_logml_error"
+            sub[y_col] = _normalize_signed_error(
+                sub["signed_logml_error"], median, -error_bound, error_bound
+            )
+        elif calibrated_error:
+            error_low = float(
+                sub["signed_logml_error_lower_threshold"].median()
+                / np.log(10.0)
+            )
+            error_high = float(
+                sub["signed_logml_error_threshold"].median()
+                / np.log(10.0)
+            )
         if use_rho:
-            rho = sub["d_M"] / sub["dm_high"]
+            rho = _normalize_distance(sub["d_M"], sub["dm_median"], sub["dm_high"])
             sub[x_col] = _safe_log(rho) if use_log_rho else rho
-            low = float(_safe_log(sub["dm_low"].iloc[0] / sub["dm_high"].iloc[0])) if use_log_rho else float(sub["dm_low"].iloc[0] / sub["dm_high"].iloc[0])
+            rho_low = _normalize_distance(
+                sub["dm_low"].iloc[0],
+                sub["dm_median"].iloc[0],
+                sub["dm_high"].iloc[0],
+            )
+            low = float(_safe_log(rho_low)) if use_log_rho else float(rho_low)
             high = 0.0 if use_log_rho else 1.0
             x_label = (
                 _diagnostic_xlabel(distance_metric)
@@ -577,9 +1165,22 @@ def plot_logml_error_vs_distance(
             low = float(_safe_log(sub["dm_low"].iloc[0])) if use_log_distance else float(sub["dm_low"].iloc[0])
             high = float(_safe_log(sub["dm_high"].iloc[0])) if use_log_distance else float(sub["dm_high"].iloc[0])
             x_label = r"$\log d_j(y)$" if use_log_distance else r"$d_j(y)$"
+        plot_x_min = min(x_min, low) if use_rho else x_min
         x_max = max(float(sub[x_col].max()) * 1.05, high * 1.1)
 
-        _add_distance_regions(ax, low, high, x_max, x_min=x_min)
+        _add_distance_regions(
+            ax,
+            low,
+            high,
+            x_max,
+            x_min=plot_x_min,
+            y_bounds=(
+                (-1.0, 1.0)
+                if normalized_error
+                else (error_low, error_high) if calibrated_error
+                else None
+            ),
+        )
         if color_by == "source":
             for source in SOURCE_MODELS:
                 group = sub[sub["source_model"] == source]
@@ -587,7 +1188,7 @@ def plot_logml_error_vs_distance(
                     continue
                 ax.scatter(
                     group[x_col],
-                    group["signed_logml_error"],
+                    group[y_col],
                     s=24,
                     color=color_map[source],
                     alpha=0.75,
@@ -597,7 +1198,7 @@ def plot_logml_error_vs_distance(
         else:
             last = ax.scatter(
                 sub[x_col],
-                sub["signed_logml_error"],
+                sub[y_col],
                 c=sub[color_by],
                 cmap="viridis",
                 s=24,
@@ -606,9 +1207,33 @@ def plot_logml_error_vs_distance(
                 linewidths=0.35,
             )
 
-        _add_first_large_error(ax, sub, x_col, "signed_logml_error", error_bound)
+        _add_first_large_error(
+            ax,
+            sub,
+            x_col,
+            y_col,
+            1.0 if normalized_error else error_bound,
+        )
         ax.axhline(0, color="0.35", linewidth=0.8)
-        ax.set_xlim(x_min, x_max)
+        if normalized_error:
+            for threshold in (-1.0, 1.0):
+                ax.axhline(
+                    threshold, color="0.35", linestyle=":", linewidth=0.9
+                )
+        elif calibrated_error:
+            ax.axhline(
+                error_low,
+                color="0.45",
+                linestyle=":",
+                linewidth=1.2,
+            )
+            ax.axhline(
+                error_high,
+                color="0.25",
+                linestyle="--",
+                linewidth=1.2,
+            )
+        ax.set_xlim(plot_x_min, x_max)
         ax.set_title(rf"Assumed {assumed.upper()}")
         ax.set_xlabel(x_label)
         _apply_axis_scales(
@@ -620,7 +1245,11 @@ def plot_logml_error_vs_distance(
         )
         ax.grid(alpha=0.18)
 
-    axes[0].set_ylabel(r"$\widehat{\log p}(y\mid M_j)-\log p(y\mid M_j)$")
+    axes[0].set_ylabel(
+        "Normalized signed log marginal-likelihood error"
+        if error_bound is not None
+        else r"$\log_{10}\widehat{p}(y\mid M_j)-\log_{10}p(y\mid M_j)$"
+    )
     _style_axes(axes)
     for ax in axes:
         offset = ax.yaxis.get_offset_text()
@@ -648,148 +1277,6 @@ def plot_logml_error_vs_distance(
     return fig, axes
 
 
-def plot_signed_logml_error_grid(
-    logml_df: pd.DataFrame,
-    output_dir: str | Path | None = FIGURE_DIR,
-    sources: tuple[str, ...] = SOURCE_MODELS,
-    assumed_models: tuple[str, ...] = ASSUMED_MODELS,
-    sharey: bool = True,
-    x: str = "distance",
-    error_bound: float | None = None,
-    x_min: float | None = None,
-    filename: str | None = None,
-    xscale: str = "linear",
-    yscale: str = "linear",
-    x_linthresh: float = 1.0,
-    y_linthresh: float = 1.0,
-):
-    if x not in {"distance", "log_distance", "logdistance"}:
-        raise ValueError("x must be 'distance' or 'log_distance'")
-    use_log = x in {"log_distance", "logdistance"}
-    x_min = -0.5 if x_min is None and use_log else 0.0 if x_min is None else x_min
-    fig, axes = plt.subplots(len(assumed_models), len(sources), figsize=(3.1 * len(sources), 2.9 * len(assumed_models)), sharey=sharey)
-    axes = np.atleast_2d(axes)
-    for r, assumed in enumerate(assumed_models):
-        for c, source in enumerate(sources):
-            ax = axes[r, c]
-            sub = logml_df[(logml_df["assumed_model"] == assumed) & (logml_df["source_model"] == source)]
-            x_values = _safe_log(sub["d_M"]) if use_log else sub["d_M"]
-            low = float(_safe_log(sub["dm_low"].iloc[0])) if use_log else float(sub["dm_low"].iloc[0])
-            high = float(_safe_log(sub["dm_high"].iloc[0])) if use_log else float(sub["dm_high"].iloc[0])
-            x_max = max(float(np.max(x_values)) * 1.05, high * 1.1)
-            _add_distance_regions(ax, low, high, x_max, x_min=x_min)
-            plot_sub = sub.assign(_x=x_values)
-            ax.scatter(plot_sub["_x"], plot_sub["signed_logml_error"], s=20, color="0.15", alpha=0.75)
-            _add_first_large_error(ax, plot_sub, "_x", "signed_logml_error", error_bound)
-            ax.axhline(0, color="0.35", linewidth=0.8)
-            ax.set_xlim(x_min, x_max)
-            _apply_axis_scales(
-                ax,
-                xscale=xscale,
-                yscale=yscale,
-                x_linthresh=x_linthresh,
-                y_linthresh=y_linthresh,
-            )
-            ax.grid(alpha=0.16)
-            _add_misspec_label(ax, assumed, source)
-            if r == 0:
-                ax.set_title(source.upper())
-            if c == 0:
-                ax.set_ylabel(f"Assumed {assumed.upper()}")
-    _style_axes(axes)
-    for ax in axes.ravel():
-        ax.title.set_fontsize(18)
-        ax.xaxis.label.set_size(18)
-        ax.yaxis.label.set_size(18)
-        ax.tick_params(labelsize=18)
-    fig.supylabel(r"$\log \widehat{p}(y\mid M_j)-\log p(y\mid M_j)$", fontsize=18)
-    fig.supxlabel(r"$\log d_j(y)$" if use_log else r"$d_j(y)$", fontsize=18)
-    fig.tight_layout(rect=(0.015, 0.025, 1, 1))
-    if output_dir is not None:
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
-        default_name = (
-            ("signed_logml_error_grid_log_distance.png" if sharey else "signed_logml_error_grid_log_distance_free_y.png")
-            if use_log else
-            ("signed_logml_error_grid.png" if sharey else "signed_logml_error_grid_free_y.png")
-        )
-        fig.savefig(Path(output_dir) / (filename or default_name), dpi=200, bbox_inches="tight")
-    return fig, axes
-
-
-def plot_posterior_metric_grid(
-    posterior_df: pd.DataFrame,
-    metric: str = "mmd",
-    output_dir: str | Path | None = FIGURE_DIR,
-    sources: tuple[str, ...] = SOURCE_MODELS,
-    assumed_models: tuple[str, ...] = ASSUMED_MODELS,
-    sharey: bool = False,
-    x: str = "distance",
-    x_min: float | None = None,
-    filename: str | None = None,
-    xscale: str = "linear",
-    yscale: str = "linear",
-    x_linthresh: float = 1.0,
-    y_linthresh: float = 1.0,
-):
-    """Plot a posterior-quality metric against summary distance."""
-    metrics = {
-        "mmd": ("posterior_mmd", "Posterior MMD", "Gaussian MMD"),
-        "mean_rmse": ("posterior_mean_rmse", "Posterior mean RMSE", "posterior mean RMSE"),
-    }
-    if metric not in metrics:
-        raise ValueError("metric must be 'mmd' or 'mean_rmse'")
-    if x not in {"distance", "log_distance", "logdistance"}:
-        raise ValueError("x must be 'distance' or 'log_distance'")
-    metric_col, y_label, title_metric = metrics[metric]
-    use_log = x in {"log_distance", "logdistance"}
-    x_min = -0.5 if x_min is None and use_log else 0.0 if x_min is None else x_min
-    fig, axes = plt.subplots(
-        len(assumed_models),
-        len(sources),
-        figsize=(3.1 * len(sources), 2.9 * len(assumed_models)),
-        sharey=sharey,
-    )
-    axes = np.atleast_2d(axes)
-    for r, assumed in enumerate(assumed_models):
-        for c, source in enumerate(sources):
-            ax = axes[r, c]
-            sub = posterior_df[(posterior_df["assumed_model"] == assumed) & (posterior_df["source_model"] == source)]
-            if sub.empty:
-                ax.set_visible(False)
-                continue
-            x_values = _safe_log(sub["d_M"]) if use_log else sub["d_M"]
-            low = float(_safe_log(sub["dm_low"].iloc[0])) if use_log else float(sub["dm_low"].iloc[0])
-            high = float(_safe_log(sub["dm_high"].iloc[0])) if use_log else float(sub["dm_high"].iloc[0])
-            x_max = max(float(np.max(x_values)) * 1.05, high * 1.1)
-            _add_distance_regions(ax, low, high, x_max, x_min=x_min)
-            ax.scatter(x_values, sub[metric_col], s=20, color="0.15", alpha=0.75)
-            ax.set_xlim(x_min, x_max)
-            _apply_axis_scales(
-                ax,
-                xscale=xscale,
-                yscale=yscale,
-                x_linthresh=x_linthresh,
-                y_linthresh=y_linthresh,
-            )
-            ax.grid(alpha=0.16)
-            _add_misspec_label(ax, assumed, source)
-            if r == 0:
-                ax.set_title(source.upper())
-            if c == 0:
-                ax.set_ylabel(f"Assumed {assumed.upper()}\n{y_label}")
-            if r == len(assumed_models) - 1:
-                ax.set_xlabel(r"$\log d_j(y)$" if use_log else r"$d_j(y)$")
-    _style_axes(axes)
-    fig.suptitle(f"NPE posterior vs analytical posterior ({title_metric})", y=1.01, fontsize=22)
-    fig.tight_layout()
-    if output_dir is not None:
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
-        suffix = "_log_distance" if use_log else ""
-        share_suffix = "" if sharey else "_free_y"
-        fig.savefig(Path(output_dir) / (filename or f"posterior_{metric}_vs_distance_grid{suffix}{share_suffix}.png"), dpi=200, bbox_inches="tight")
-    return fig, axes
-
-
 def _pmp_long_frame(pmp_df: pd.DataFrame, estimate: str = "npe") -> pd.DataFrame:
     pmp_df = _with_extrapolation_class(pmp_df).copy()
     if "ambiguity_score_true" not in pmp_df:
@@ -798,17 +1285,22 @@ def _pmp_long_frame(pmp_df: pd.DataFrame, estimate: str = "npe") -> pd.DataFrame
     for model in ASSUMED_MODELS:
         cols = [
             "source_model", "id", "at_least_one_not_extrapolative", "extrapolation_class", "nearest_two_extrapolation_class", "ambiguity_score", "ambiguity_score_true", "d_min", "d_second",
-            f"d_{model}", f"dm_low_{model}", f"dm_high_{model}",
+            f"d_{model}", f"dm_median_{model}", f"dm_low_{model}", f"dm_high_{model}",
             f"p_gold_{model}", f"p_npe_{model}", f"p_direct_{model}", f"signed_pmp_error_{estimate}_{model}",
         ]
         part = pmp_df[cols].copy()
-        part.columns = ["source_model", "id", "at_least_one_not_extrapolative", "extrapolation_class", "nearest_two_extrapolation_class", "A_raw", "A_true", "d_min", "d_second", "d_M", "dm_low", "dm_high", "gold", "npe", "direct", "signed_error"]
-        part["rho_M"] = part["d_M"] / part["dm_high"]
-        part["rho_low"] = part["dm_low"] / part["dm_high"]
+        part.columns = ["source_model", "id", "at_least_one_not_extrapolative", "extrapolation_class", "nearest_two_extrapolation_class", "A_raw", "A_true", "d_min", "d_second", "d_M", "dm_median", "dm_low", "dm_high", "gold", "npe", "direct", "signed_error"]
+        part["rho_M"] = _normalize_distance(part["d_M"], part["dm_median"], part["dm_high"])
+        part["rho_low"] = _normalize_distance(part["dm_low"], part["dm_median"], part["dm_high"])
         part["log_d_M"] = _safe_log(part["d_M"])
         part["log_d_min"] = _safe_log(part["d_min"])
         part["log_rho_M"] = _safe_log(part["rho_M"])
         part["model"] = model
+        lower_threshold = f"pmp_error_lower_threshold_{model}"
+        upper_threshold = f"pmp_error_upper_threshold_{model}"
+        if {lower_threshold, upper_threshold}.issubset(pmp_df.columns):
+            part["error_threshold_low"] = pmp_df[lower_threshold].to_numpy()
+            part["error_threshold_high"] = pmp_df[upper_threshold].to_numpy()
         rows.append(part)
     return pd.concat(rows, ignore_index=True) # row number: 3 * 7 * 50
 
@@ -1038,6 +1530,7 @@ def plot_pmp_diagnostic(
     regions: str | None = None,
     sharex: bool = False,
     error_bound: float | None = None,
+    error_median: float | dict[str, float] | None = None,
     error_subset: str | None = None,
     x_min: float = -0.5,
     show_rho_leq_one_max_error: bool = True,
@@ -1048,8 +1541,17 @@ def plot_pmp_diagnostic(
     y_linthresh: float = 0.05,
 ):
     data, by_model = _pmp_plot_data(pmp_df, y, estimate)
-    y_col = "signed_error" if y == "signed_error" else "pmp_rmse"
-    y_label = r"$\hat{p}(M_j|y)-p(M_j|y)$" if y == "signed_error" else "PMP RMSE"
+    normalized_error = y == "signed_error" and error_bound is not None
+    y_col = (
+        "_normalized_signed_error"
+        if normalized_error
+        else "signed_error" if y == "signed_error" else "pmp_rmse"
+    )
+    y_label = (
+        "Normalized signed PMP error"
+        if normalized_error
+        else r"$\hat{p}(M_j|y)-p(M_j|y)$" if y == "signed_error" else "PMP RMSE"
+    )
     n_axes = len(ASSUMED_MODELS) if by_model else 1
     right_rmse_legend = y == "rmse" and group_by in {
         "source_model",
@@ -1073,41 +1575,145 @@ def plot_pmp_diagnostic(
     plot_data = []
 
     for model in ASSUMED_MODELS if by_model else [None]:
-        sub = data[data["model"] == model] if by_model else data
+        sub = (data[data["model"] == model] if by_model else data).copy()
+        calibrated_error = (
+            y == "signed_error"
+            and not normalized_error
+            and {
+                "error_threshold_low",
+                "error_threshold_high",
+            }.issubset(sub.columns)
+        )
+        threshold_low = threshold_high = None
+        if normalized_error:
+            median = _error_median(sub, "signed_error", model, error_median)
+            sub[y_col] = _normalize_signed_error(
+                sub["signed_error"], median, -error_bound, error_bound
+            )
+        elif calibrated_error:
+            threshold_low = float(sub["error_threshold_low"].median())
+            threshold_high = float(sub["error_threshold_high"].median())
         x_col, x_label = _pmp_x_column(
             x,
             model,
             distance_metric=distance_metric,
         )
+        plot_x_min = x_min
         x_max = max(float(sub[x_col].max()) * 1.05, 1e-12)
         if regions == "assumed":
-            _, high = _assumed_region_bounds(sub, x)
+            low, high = _assumed_region_bounds(sub, x)
+            if x == "rho":
+                plot_x_min = min(plot_x_min, low)
             x_max = max(x_max, high * 1.1)
         elif regions == "nearest":
             _, _, x_max = _nearest_distance_region(pmp_df)
             if x == "log_d_min":
                 x_max = float(_safe_log(x_max))
-        plot_data.append((model, sub, x_col, x_label, x_max))
+        plot_data.append(
+            (
+                model,
+                sub,
+                x_col,
+                x_label,
+                plot_x_min,
+                x_max,
+                calibrated_error,
+                threshold_low,
+                threshold_high,
+            )
+        )
 
-    shared_x_max = max(item[-1] for item in plot_data)
+    shared_x_max = max(item[5] for item in plot_data)
+    shared_x_min = min(item[4] for item in plot_data)
 
-    for ax, (model, sub, x_col, x_label, x_max) in zip(axes, plot_data, strict=False):
+    for ax, (
+        model,
+        sub,
+        x_col,
+        x_label,
+        plot_x_min,
+        x_max,
+        calibrated_error,
+        threshold_low,
+        threshold_high,
+    ) in zip(axes, plot_data, strict=False):
+        plot_x_min = shared_x_min if sharex else plot_x_min
         plot_x_max = shared_x_max if sharex else x_max
+        y_bounds = (
+            (-1.0, 1.0)
+            if normalized_error
+            else (threshold_low, threshold_high) if calibrated_error
+            else None
+        )
         if regions == "assumed":
             low, high = _assumed_region_bounds(sub, x)
-            _add_distance_regions(ax, low, high, plot_x_max, x_min=x_min)
-            ax.set_xlim(x_min, plot_x_max)
+            _add_distance_regions(
+                ax,
+                low,
+                high,
+                plot_x_max,
+                x_min=plot_x_min,
+                y_bounds=y_bounds,
+            )
+            ax.set_xlim(plot_x_min, plot_x_max)
         elif regions == "nearest":
             low, high, _ = _nearest_distance_region(pmp_df)
             if x == "log_d_min":
                 low, high = float(_safe_log(low)), float(_safe_log(high))
-            _add_distance_regions(ax, low, high, plot_x_max, x_min=x_min)
-            ax.set_xlim(x_min, plot_x_max)
+            _add_distance_regions(
+                ax,
+                low,
+                high,
+                plot_x_max,
+                x_min=plot_x_min,
+                y_bounds=y_bounds,
+            )
+            ax.set_xlim(plot_x_min, plot_x_max)
+        elif normalized_error:
+            ax.axhspan(-1.0, 1.0, color=TYPICAL_SET_FILL, alpha=0.70, zorder=0)
+        elif calibrated_error:
+            ax.axhspan(
+                threshold_low,
+                threshold_high,
+                color=TYPICAL_SET_FILL,
+                alpha=0.70,
+                zorder=0,
+            )
 
         last = _scatter_pmp(ax, sub, x_col, y_col, group_by) or last
-        _add_first_large_error(ax, _error_subset_data(sub, error_subset), x_col, y_col, error_bound)
+        _add_first_large_error(
+            ax,
+            _error_subset_data(sub, error_subset),
+            x_col,
+            y_col,
+            1.0 if normalized_error else error_bound,
+        )
         if y == "signed_error":
             ax.axhline(0, color="0.35", linewidth=0.8)
+            if normalized_error:
+                for threshold in (-1.0, 1.0):
+                    ax.axhline(
+                        threshold, color="0.35", linestyle=":", linewidth=0.9
+                    )
+            elif calibrated_error:
+                ax.axhline(
+                    threshold_low,
+                    color="0.45",
+                    linestyle=":",
+                    linewidth=1.2,
+                )
+                if not np.isclose(
+                    threshold_low,
+                    threshold_high,
+                    rtol=0.0,
+                    atol=1e-15,
+                ):
+                    ax.axhline(
+                        threshold_high,
+                        color="0.25",
+                        linestyle="--",
+                        linewidth=1.2,
+                    )
             if by_model and show_rho_leq_one_max_error:
                 _add_rho_max_error_line(ax, sub, y_col)
         ax.set_title(rf"$p(M_{model[-1]}\mid y)$" if by_model else title or "")

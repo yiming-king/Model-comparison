@@ -38,11 +38,15 @@ class Calculation:
             obs_data[i][f"gold_log_marginal_{self.model}"]=log_marginal_analytical
             obs_data[i][f"gold_post_samples_{self.model}"]=analytical_posterior_samples
         return obs_data
-    def npe_estimation(self,obs_data):
+    def npe_estimation(self,obs_data, seed: int | None = None):
         x_batch = np.stack([d["x"] for d in obs_data], axis=0)
-        mu_samples = self.approximator.sample(
-            conditions={"x": x_batch},
-            num_samples=self.num_samples)
+        sample_kwargs = {
+            "conditions": {"x": x_batch},
+            "num_samples": self.num_samples,
+        }
+        if seed is not None:
+            sample_kwargs["seed"] = int(seed)
+        mu_samples = self.approximator.sample(**sample_kwargs)
         all_post_samples = np.asarray(mu_samples["mu"], dtype=np.float32)
         for i in range(len(obs_data)):
             dataset=obs_data[i]["x"]
@@ -56,6 +60,8 @@ class Calculation:
             npe_log_marginal=estimator.log_marginal_npe(method=self.logml_method)
             obs_data[i][f"npe_post_samples_{self.model}"]=npe_post_samples
             obs_data[i][f"npe_log_marginal_{self.model}"]=npe_log_marginal
+            obs_data[i][f"importance_ess_{self.model}"]=estimator.importance_ess
+            obs_data[i][f"num_npe_logml_draws_{self.model}"]=estimator.num_importance_samples
         return obs_data
     
     def npe_estimation_use_gold_posterior(self,obs_data):

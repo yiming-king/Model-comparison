@@ -334,6 +334,7 @@ def compute_diagnostic_pipeline(
     *,
     summary_base_distribution: str | None = "normal",
     run_suffix: str | None = None,
+    embed_dim: int = 64,
     **kwargs,
 ) -> dict[str, dict[str, object]]:
     """Compute or load one diagnostic suite for each requested summary size."""
@@ -344,6 +345,7 @@ def compute_diagnostic_pipeline(
         for config in (
             TrainingConfig(
                 summary_multiplier=value,
+                embed_dim=embed_dim,
                 summary_base_distribution=summary_base_distribution,
                 run_suffix=run_suffix,
             )

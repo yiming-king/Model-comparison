@@ -17,11 +17,15 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
     __package__ = "benchmark.examples.diffusion.calibration"
 
-from ..config import BASE_DIR, MODELS, TrainingConfig
-from .thresholds import add_thresholds_to_metrics, calculate_thresholds
+from ..config import BASE_DIR, MODEL_LABELS, MODELS, TrainingConfig
+from .thresholds import (
+    DEFAULT_POSTERIOR_MMD_QUANTILE,
+    DEFAULT_SIGNED_ERROR_COVERAGE,
+    add_thresholds_to_metrics,
+    calculate_thresholds,
+)
 
 
-MODEL_LABELS = {model: f"M{index + 1}" for index, model in enumerate(MODELS)}
 DEFAULT_OUTPUT_ROOT = BASE_DIR / "calibration_outputs"
 GOLD_POSTERIOR_DRAWS = 2048
 MMD_DRAWS = 1024
@@ -109,6 +113,7 @@ def build_npe_configs(
     summary_multipliers: list[int],
     training_settings: list[str],
     without_mmd_run_suffix: str = "noMMD",
+    embed_dim: int = 64,
 ) -> list[NPEConfig]:
     output = []
     for setting in training_settings:
@@ -120,6 +125,7 @@ def build_npe_configs(
                     training_setting=setting,
                     training=TrainingConfig(
                         summary_multiplier=multiplier,
+                        embed_dim=embed_dim,
                         summary_base_distribution=(
                             "normal" if setting == "with_mmd" else None
                         ),
@@ -666,12 +672,20 @@ def main() -> None:
         default="noMMD",
         help="Checkpoint suffix for the without-MMD networks (for example noMMD_rerun1).",
     )
+    parser.add_argument(
+        "--embed-dim",
+        type=int,
+        default=TrainingConfig().embed_dim,
+        help="DeepSet embedding dimension used by the selected checkpoints.",
+    )
     parser.add_argument("--model-priors", nargs=4, type=float, default=[0.25] * 4)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--rscript", default="Rscript")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
+    if args.embed_dim < 1:
+        parser.error("--embed-dim must be at least 1")
     if args.reference_root is not None and args.stage in {"generate", "mcmc", "all"}:
         parser.error("--reference-root is only valid for metrics or thresholds")
     paths = CalibrationPaths(
@@ -684,6 +698,7 @@ def main() -> None:
         args.summary_multipliers,
         args.training_settings,
         args.without_mmd_run_suffix,
+        args.embed_dim,
     )
     priors = _model_priors(args.model_priors)
     paths.root.mkdir(parents=True, exist_ok=True)
@@ -702,6 +717,11 @@ def main() -> None:
                 "gold_posterior_draws": GOLD_POSTERIOR_DRAWS,
                 "mmd_draws_per_sample": MMD_DRAWS,
                 "npe_logml_draws": NPE_LOGML_DRAWS,
+                "threshold_intervals": {
+                    "posterior_mmd": [0.0, DEFAULT_POSTERIOR_MMD_QUANTILE],
+                    "signed_logml_error": DEFAULT_SIGNED_ERROR_COVERAGE,
+                    "signed_pmp_error": DEFAULT_SIGNED_ERROR_COVERAGE,
+                },
                 "npe_configs": [
                     {"training_setting": item.training_setting, **asdict(item.training)}
                     for item in configs

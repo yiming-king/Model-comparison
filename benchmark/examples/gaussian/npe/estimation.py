@@ -21,7 +21,7 @@ class MarginalLikelihoodEstimator:
         self.df=df
         self.use_student_t=use_student_t
         self.rng=rng if rng is not None else np.random.default_rng()
-    
+
     def log_prior_mu(self):
         mu = np.asarray(self.mu)
         mu0 = float(self.mu_prior_mean)
@@ -67,10 +67,14 @@ class MarginalLikelihoodEstimator:
     def log_marginal_npe(self, method: str = "log_mean_exp") -> float:
         """Estimate log marginal likelihood by aggregating posterior log-weights."""
         log_terms = self.log_prior_mu() + self.log_likelihood_x_given_mu() - self.log_q_phi()
+        normalized_log_weights = log_terms - logsumexp(log_terms)
+        self.importance_ess = float(
+            np.exp(-logsumexp(2.0 * normalized_log_weights))
+        )
+        self.num_importance_samples = int(len(log_terms))
 
         if method == "log_mean_exp":
             return float(logmeanexp(log_terms))
         if method == "mean_log":
             return float(np.mean(log_terms))
         raise ValueError("method must be 'log_mean_exp' or 'mean_log'")
-    

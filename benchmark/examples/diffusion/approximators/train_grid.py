@@ -26,6 +26,8 @@ def _command(args, multiplier: int) -> list[str]:
         str(args.num_batches),
         "--summary-multiplier",
         str(multiplier),
+        "--embed-dim",
+        str(args.embed_dim),
     ]
     if args.overwrite:
         cmd.append("--overwrite")
@@ -33,6 +35,17 @@ def _command(args, multiplier: int) -> list[str]:
         cmd.append("--no-summary-mmd")
     if args.run_suffix:
         cmd.extend(["--run-suffix", args.run_suffix])
+    if args.validation_size is not None:
+        cmd.extend(
+            [
+                "--validation-size",
+                str(args.validation_size),
+                "--validation-freq",
+                str(args.validation_freq),
+                "--validation-seed",
+                str(args.validation_seed),
+            ]
+        )
     return cmd
 
 
@@ -76,8 +89,12 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=defaults.epochs)
     parser.add_argument("--batch-size", type=int, default=defaults.batch_size)
     parser.add_argument("--num-batches", type=int, default=defaults.num_batches)
+    parser.add_argument("--embed-dim", type=int, default=defaults.embed_dim)
     parser.add_argument("--no-summary-mmd", action="store_true")
     parser.add_argument("--run-suffix")
+    parser.add_argument("--validation-size", type=int)
+    parser.add_argument("--validation-freq", type=int, default=1)
+    parser.add_argument("--validation-seed", type=int, default=2026)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -88,6 +105,12 @@ def main() -> None:
         parser.error("--threads-per-worker must be at least 1")
     if any(multiplier < 1 for multiplier in args.summary_multipliers):
         parser.error("--summary-multipliers must contain positive integers")
+    if args.validation_size is not None and args.validation_size < 1:
+        parser.error("--validation-size must be at least 1")
+    if args.validation_freq < 1:
+        parser.error("--validation-freq must be at least 1")
+    if args.embed_dim < 1:
+        parser.error("--embed-dim must be at least 1")
     if args.no_summary_mmd and not args.run_suffix:
         parser.error("--run-suffix is required with --no-summary-mmd")
 

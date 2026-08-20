@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -13,21 +14,30 @@ from matplotlib.patches import Patch
 from matplotlib.scale import SymmetricalLogTransform
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 from scipy.special import softmax
+from sklearn.metrics import roc_auc_score
 
 from ..config import BASE_DIR, MODELS, MODEL_TITLES, RESULT_DIR, TrainingConfig
-from .multisource_pipeline import all_observed_paths
+from .multisource_pipeline import all_observed_paths, reference_suite_path
 from .posterior_diagnostic import load_posterior_diagnostic
+from .summary_diagnostic import load_references
 
 
 SummarySpecs = tuple[tuple[str, TrainingConfig], ...]
+AxisScaleSpec = str | Mapping[str, str]
 
 SUMMARY_LABELS = {1: "S=D", 2: "S=2D", 4: "S=4D", 6: "S=6D"}
 SUMMARY_COLORS = {
-    "S=D": "#002FB2",
+    "S=D":  "#0072B2",
     "S=2D": "#E69F00",
-    "S=4D": "#009E73",
-    "S=6D": "#CC79A7",
+    "S=4D": "#CC79A7",
+    "S=6D": "#009E73",
 }
+PLOT_SUMMARY_LABELS = ("S=D", "S=2D", "S=4D")
+LEGACY_CALIBRATED_FIGURE_FILENAMES = {
+    "combined_normalized_logml_error_vs_rho.png",
+    "combined_normalized_pmp_error_vs_rho.png",
+}
+
 
 
 def _make_summary_specs(
@@ -56,16 +66,137 @@ NO_MMD_SUMMARY_SPECS = _make_summary_specs(
 MODEL_SETS = {"all": MODELS, "m1_m3": ("m1", "m3")}
 PMP_SOURCES = {"all": "four_model", "m1_m3": "m1_m3"}
 
-PMP_ERROR_BOUND = 0.1
-LOGML_ERROR_BOUND = 1.0  # signed base-10 log marginal-likelihood error
+# These values control only the linear region of symlog axes. They are not
+# diagnostic thresholds; all diagnostic bounds come from NPE--MCMC references.
+PMP_SYMLOG_LINTHRESH = 0.1
+LOGML_SYMLOG_LINTHRESH = 1.0
 RHO_XSCALE = "symlog"
 RHO_SYMLOG_BASE = 10.0
 RHO_SYMLOG_LINTHRESH = 1.0
 RHO_SYMLOG_LINSCALE = 1.0
+AXIS_SCALES = ("linear", "symlog")
 LOWESS_FRAC = {"simulated": 0.7, "empirical": 1}
 LOGML_CENTRAL_INTERVAL = 0.9
 TYPICAL_SET_FILL = "#DCEEDC"
 M1_M3_COMPARISON_FIGSIZE = (8.0, 5)
+NONNEGATIVE_Y_MARGIN = 0.05
+THRESHOLD_LINEWIDTH = 1.8
+
+
+def _compact_tick_label(value: float, _: int | None = None) -> str:
+    """Format axis values compactly without exposing full floating-point limits."""
+    if np.isclose(value, 0.0, atol=1e-12):
+        return "0"
+    return f"{value:.2g}"
+
+
+def _normalize_distance(x, median, high):
+    return (x - median) / (high - median)
+
+
+def _scale_nonnegative_metric(x, high):
+    """Scale a non-negative metric so its raw upper threshold maps to one."""
+    values = np.asarray(x, dtype=float)
+    upper = np.asarray(high, dtype=float)
+    if np.any(upper <= 0.0):
+        raise ValueError("Non-negative metric upper threshold must be positive")
+    return values / upper
+
+
+def _nonnegative_plot_limits(upper: float) -> tuple[float, float]:
+    """Add visual space below zero without changing non-negative data values."""
+    upper = float(upper)
+    if not np.isfinite(upper) or upper <= 0.0:
+        raise ValueError("Non-negative plot upper limit must be positive and finite")
+    return -NONNEGATIVE_Y_MARGIN * upper, upper
+
+
+def _set_axis_scale(
+    ax: plt.Axes,
+    axis: str,
+    scale: str,
+    *,
+    linthresh: float,
+) -> None:
+    """Apply a notebook-selectable linear or symmetrical-log axis scale."""
+    if scale not in AXIS_SCALES:
+        raise ValueError(f"{axis}scale must be one of {AXIS_SCALES}; got {scale!r}")
+    if scale == "symlog" and linthresh <= 0.0:
+        raise ValueError(f"{axis}_symlog_linthresh must be positive")
+    setter = ax.set_xscale if axis == "x" else ax.set_yscale
+    if scale == "symlog":
+        setter(
+            "symlog",
+            base=RHO_SYMLOG_BASE,
+            linthresh=linthresh,
+            linscale=RHO_SYMLOG_LINSCALE,
+        )
+    else:
+        setter("linear")
+
+
+def _resolve_metric_scale(scale: AxisScaleSpec, value: str) -> str:
+    """Resolve a shared axis scale or a per-result scale mapping."""
+    if isinstance(scale, str):
+        return scale
+    if value not in scale:
+        raise ValueError(f"yscale mapping has no entry for {value!r}")
+    return scale[value]
+
+
+def _scale_signed_by_lower_bound(x, low):
+    """Scale a signed metric by the magnitude of its raw lower bound."""
+    values = np.asarray(x, dtype=float)
+    lower = np.asarray(low, dtype=float)
+    scale = np.abs(lower)
+    if np.any(scale <= 0.0):
+        raise ValueError("Signed-error lower threshold must be non-zero")
+    return values / scale
+
+
+METRIC_NORMALIZERS = {
+    "posterior_mmd": _scale_nonnegative_metric,
+    "logml": _scale_signed_by_lower_bound,
+}
+
+
+def _normalize_metric(metric: str, values, median, low, high):
+    """Apply the independently replaceable display transform for one metric."""
+    try:
+        normalizer = METRIC_NORMALIZERS[metric]
+    except KeyError as error:
+        raise ValueError(f"No display normalizer registered for {metric!r}") from error
+    if metric == "posterior_mmd":
+        return normalizer(values, high)
+    return normalizer(values, low)
+
+
+def _metric_ylabel(base: str, normalized: bool) -> str:
+    """Build a display label whose normalization suffix follows the switch."""
+    suffix = "(NPE, MCMC; normalized)" if normalized else "(NPE, MCMC)"
+    return f"{base}\n{suffix}"
+
+
+def _threshold_band(thresholds) -> tuple[float, float] | None:
+    """Convert the active error thresholds to one shaded acceptance band."""
+    values = np.asarray(tuple(thresholds), dtype=float)
+    if not len(values):
+        return None
+    if len(values) == 1:
+        return (min(0.0, float(values[0])), max(0.0, float(values[0])))
+    return float(values.min()), float(values.max())
+
+
+def _shade_typical_set(
+    ax: plt.Axes,
+    x_low: float,
+    y_band: tuple[float, float] | None = None,
+    alpha: float = 0.70,
+) -> None:
+    """Shade the diagnostic interval and the active error-threshold band."""
+    ax.axvspan(x_low, 1.0, color=TYPICAL_SET_FILL, alpha=alpha, zorder=0)
+    if y_band is not None:
+        ax.axhspan(*y_band, color=TYPICAL_SET_FILL, alpha=alpha, zorder=0)
 
 MODEL_MATCH_STYLES = {
     False: {"marker": "o", "size": 30, "label": "misspecified datasets"},
@@ -97,16 +228,16 @@ METRIC_PLOTS = {
         "column": "logml_error",
         "ylabel": r"$\log_{10}\widehat{p}(y\mid M_j)-\log_{10}p(y\mid M_j)$",
         "xscale": RHO_XSCALE,
-        "thresholds": (-1.0, 1.0),
+        "thresholds": (),
         "filename": "combined_logml_error_vs_rho.png",
         "extrema": False,
-        "sharey": False,
+        "sharey": True,
     },
     "pmp": {
         "column": "pmp_error",
         "ylabel": r"$\widehat{p}(M_j\mid y)-p(M_j\mid y)$",
         "xscale": RHO_XSCALE,
-        "thresholds": (-0.1, 0.1),
+        "thresholds": (),
         "filename": "combined_pmp_error_vs_rho.png",
         "extrema": False,
         "sharey": False,
@@ -118,58 +249,135 @@ CALIBRATED_METRIC_PLOTS = {
     "posterior_mmd": {
         **METRIC_PLOTS["posterior_mmd"],
         "column": "normalized_mmd",
-        "ylabel": "Normalized posterior MMD",
-        "threshold_column": None,
-        "common_thresholds": (1.0,),
-        "symmetric_threshold": False,
+        "ylabel": _metric_ylabel("Posterior MMD", normalized=True),
+        "threshold_columns": (
+            "normalized_mmd_low",
+            "normalized_mmd_high",
+        ),
+        "common_thresholds": (),
         "filename": "combined_normalized_posterior_mmd_vs_rho.png",
     },
     "logml": {
         **METRIC_PLOTS["logml"],
-        "threshold_column": None,
-        "common_thresholds": (-1.0, 1.0),
-        "symmetric_threshold": True,
+        "column": "normalized_logml_error",
+        "ylabel": _metric_ylabel(METRIC_PLOTS["logml"]["ylabel"], normalized=True),
+        "threshold_columns": (
+            "normalized_logml_error_low",
+            "normalized_logml_error_high",
+        ),
+        "common_thresholds": (),
     },
     "pmp": {
         **METRIC_PLOTS["pmp"],
-        "threshold_column": None,
-        "common_thresholds": (-PMP_ERROR_BOUND, PMP_ERROR_BOUND),
-        "symmetric_threshold": True,
+        "ylabel": _metric_ylabel(METRIC_PLOTS["pmp"]["ylabel"], normalized=False),
+        "threshold_columns": (
+            "pmp_error_lower_threshold",
+            "pmp_error_upper_threshold",
+        ),
+        "common_thresholds": (),
     },
 }
+
+RAW_CALIBRATED_METRIC_PLOTS = {
+    "posterior_mmd": {
+        **METRIC_PLOTS["posterior_mmd"],
+        "ylabel": _metric_ylabel("Posterior MMD", normalized=False),
+        "threshold_columns": (
+            "posterior_mmd_lower_threshold",
+            "posterior_mmd_upper_threshold",
+        ),
+        "common_thresholds": (),
+    },
+    "logml": {
+        **METRIC_PLOTS["logml"],
+        "ylabel": _metric_ylabel(METRIC_PLOTS["logml"]["ylabel"], normalized=False),
+        "threshold_columns": (
+            "log10_logml_error_lower_threshold",
+            "log10_logml_error_upper_threshold",
+        ),
+        "common_thresholds": (),
+    },
+    "pmp": {
+        **METRIC_PLOTS["pmp"],
+        "ylabel": _metric_ylabel(METRIC_PLOTS["pmp"]["ylabel"], normalized=False),
+        "threshold_columns": (
+            "pmp_error_lower_threshold",
+            "pmp_error_upper_threshold",
+        ),
+        "common_thresholds": (),
+    },
+}
+
+
+def _calibrated_plot_specs(normalize_metrics: bool) -> dict[str, dict]:
+    """Select display columns without changing raw diagnostic decisions."""
+    return CALIBRATED_METRIC_PLOTS if normalize_metrics else RAW_CALIBRATED_METRIC_PLOTS
 
 
 def load_calibration_thresholds(
     summary_specs: SummarySpecs,
     threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
 ) -> pd.DataFrame:
-    """Load one 95% threshold per assumed model and NPE configuration."""
+    """Load metric-specific calibrated bounds per model and NPE configuration."""
     summary_to_config = {
         summary: config.summary_label for summary, config in summary_specs
     }
     thresholds = pd.read_csv(threshold_path, keep_default_na=False)
-    required = {"generating_model", "npe_configuration", "metric", "threshold"}
+    required = {
+        "generating_model",
+        "npe_configuration",
+        "metric",
+        "lower_threshold",
+        "threshold",
+        "median",
+    }
     missing = sorted(required.difference(thresholds.columns))
     if missing:
         raise ValueError(f"Calibration threshold table is missing columns: {missing}")
     thresholds = thresholds.loc[
         thresholds["npe_configuration"].isin(summary_to_config.values())
     ]
-    wide = thresholds.pivot(
+    threshold_wide = thresholds.pivot(
         index=["generating_model", "npe_configuration"],
         columns="metric",
         values="threshold",
     ).rename(
         columns={
-            "posterior_mmd": "posterior_mmd_threshold",
-            "absolute_logml_error": "absolute_logml_error_threshold",
-            "absolute_pmp_error": "pmp_error_threshold",
+            "posterior_mmd": "posterior_mmd_upper_threshold",
+            "signed_logml_error": "signed_logml_error_upper_threshold",
+            "signed_pmp_error": "pmp_error_upper_threshold",
         }
     )
+    lower_threshold_wide = thresholds.pivot(
+        index=["generating_model", "npe_configuration"],
+        columns="metric",
+        values="lower_threshold",
+    ).rename(
+        columns={
+            "posterior_mmd": "posterior_mmd_lower_threshold",
+            "signed_logml_error": "signed_logml_error_lower_threshold",
+            "signed_pmp_error": "pmp_error_lower_threshold",
+        }
+    )
+    median_wide = thresholds.pivot(
+        index=["generating_model", "npe_configuration"],
+        columns="metric",
+        values="median",
+    ).rename(
+        columns={
+            "posterior_mmd": "posterior_mmd_median",
+            "signed_logml_error": "signed_logml_error_median",
+            "signed_pmp_error": "signed_pmp_error_median",
+        }
+    )
+    wide = threshold_wide.join(lower_threshold_wide).join(median_wide)
     threshold_columns = [
-        "posterior_mmd_threshold",
-        "absolute_logml_error_threshold",
-        "pmp_error_threshold",
+        "posterior_mmd_lower_threshold",
+        "posterior_mmd_upper_threshold",
+        "signed_logml_error_lower_threshold",
+        "signed_logml_error_upper_threshold",
+        "pmp_error_lower_threshold",
+        "pmp_error_upper_threshold",
     ]
     missing_metrics = sorted(set(threshold_columns).difference(wide.columns))
     if missing_metrics:
@@ -177,23 +385,43 @@ def load_calibration_thresholds(
     wide = wide.reset_index().rename(columns={"generating_model": "model"})
     config_to_summary = {config: summary for summary, config in summary_to_config.items()}
     wide["summary"] = wide["npe_configuration"].map(config_to_summary)
-    wide["log10_logml_error_threshold"] = (
-        wide["absolute_logml_error_threshold"] / np.log(10.0)
+    wide["log10_logml_error_lower_threshold"] = (
+        wide["signed_logml_error_lower_threshold"] / np.log(10.0)
+    )
+    wide["log10_logml_error_upper_threshold"] = (
+        wide["signed_logml_error_upper_threshold"] / np.log(10.0)
+    )
+    wide["log10_logml_error_median"] = (
+        wide["signed_logml_error_median"] / np.log(10.0)
     )
     output_columns = [
         "model",
         "summary",
         "npe_configuration",
-        "posterior_mmd_threshold",
-        "log10_logml_error_threshold",
-        "pmp_error_threshold",
+        "posterior_mmd_upper_threshold",
+        "posterior_mmd_lower_threshold",
+        "log10_logml_error_lower_threshold",
+        "log10_logml_error_upper_threshold",
+        "pmp_error_lower_threshold",
+        "pmp_error_upper_threshold",
+        "posterior_mmd_median",
+        "log10_logml_error_median",
+        "signed_pmp_error_median",
     ]
     output = wide[output_columns].copy()
     numeric_columns = output_columns[3:]
     if output[numeric_columns].isna().any().any():
         raise ValueError("Calibration threshold table contains missing values")
-    if output[numeric_columns].le(0.0).any().any():
-        raise ValueError("Calibration thresholds must be strictly positive")
+    if output["posterior_mmd_lower_threshold"].ne(0.0).any():
+        raise ValueError("Posterior MMD lower thresholds must be zero")
+    interval_pairs = (
+        ("posterior_mmd_lower_threshold", "posterior_mmd_upper_threshold"),
+        ("log10_logml_error_lower_threshold", "log10_logml_error_upper_threshold"),
+        ("pmp_error_lower_threshold", "pmp_error_upper_threshold"),
+    )
+    for low, high in interval_pairs:
+        if output[low].ge(output[high]).any():
+            raise ValueError(f"Calibration lower threshold must be below {high}")
     return output
 
 
@@ -202,6 +430,9 @@ def _attach_calibration_thresholds(
     summary_specs: SummarySpecs,
     threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
 ) -> pd.DataFrame:
+    data = data.drop(
+        columns=[column for column in data if column.startswith("normalized_pmp")]
+    )
     thresholds = load_calibration_thresholds(summary_specs, threshold_path)
     output = data.merge(
         thresholds,
@@ -210,9 +441,11 @@ def _attach_calibration_thresholds(
         validate="many_to_one",
     )
     threshold_columns = [
-        "posterior_mmd_threshold",
-        "log10_logml_error_threshold",
-        "pmp_error_threshold",
+        "posterior_mmd_upper_threshold",
+        "log10_logml_error_lower_threshold",
+        "log10_logml_error_upper_threshold",
+        "pmp_error_lower_threshold",
+        "pmp_error_upper_threshold",
     ]
     if output[threshold_columns].isna().any().any():
         missing = output.loc[
@@ -222,27 +455,65 @@ def _attach_calibration_thresholds(
             "Missing calibration thresholds for:\n" + missing.to_string(index=False)
         )
     if "observed_mmd" in output:
-        output["normalized_mmd"] = (
-            output["observed_mmd"] / output["posterior_mmd_threshold"]
+        output["normalized_mmd"] = _normalize_metric(
+            "posterior_mmd",
+            output["observed_mmd"],
+            output["posterior_mmd_median"],
+            output["posterior_mmd_lower_threshold"],
+            output["posterior_mmd_upper_threshold"],
+        )
+        output["normalized_mmd_low"] = _normalize_metric(
+            "posterior_mmd",
+            output["posterior_mmd_lower_threshold"],
+            output["posterior_mmd_median"],
+            output["posterior_mmd_lower_threshold"],
+            output["posterior_mmd_upper_threshold"],
+        )
+        output["normalized_mmd_high"] = _normalize_metric(
+            "posterior_mmd",
+            output["posterior_mmd_upper_threshold"],
+            output["posterior_mmd_median"],
+            output["posterior_mmd_lower_threshold"],
+            output["posterior_mmd_upper_threshold"],
+        )
+    error_specs = {"logml": ("logml_error", "log10_logml_error")}
+    for metric, (value_column, prefix) in error_specs.items():
+        lower_threshold_column = f"{prefix}_lower_threshold"
+        upper_threshold_column = f"{prefix}_upper_threshold"
+        median_column = "log10_logml_error_median"
+        low = output[lower_threshold_column]
+        high = output[upper_threshold_column]
+        output[f"normalized_{metric}_error"] = _normalize_metric(
+            metric,
+            output[value_column], output[median_column], low, high
+        )
+        output[f"normalized_{metric}_error_low"] = _normalize_metric(
+            metric, low, output[median_column], low, high
+        )
+        output[f"normalized_{metric}_error_high"] = _normalize_metric(
+            metric, high, output[median_column], low, high
         )
     return output
 
 
 CALIBRATED_CLASSIFICATION_SPECS = {
     "posterior_mmd": {
-        "value_column": "normalized_mmd",
-        "threshold": 1.0,
-        "absolute": False,
+        "value_column": "observed_mmd",
+        "bounds": (
+            "posterior_mmd_lower_threshold",
+            "posterior_mmd_upper_threshold",
+        ),
     },
     "logml": {
         "value_column": "logml_error",
-        "threshold": 1.0,
-        "absolute": True,
+        "bounds": (
+            "log10_logml_error_lower_threshold",
+            "log10_logml_error_upper_threshold",
+        ),
     },
     "pmp": {
         "value_column": "pmp_error",
-        "threshold": PMP_ERROR_BOUND,
-        "absolute": True,
+        "bounds": ("pmp_error_lower_threshold", "pmp_error_upper_threshold"),
     },
 }
 
@@ -255,11 +526,17 @@ def diagnostic_classification_rows(
     frames = []
     for metric, spec in CALIBRATED_CLASSIFICATION_SPECS.items():
         value_column = spec["value_column"]
+        bound_columns = spec.get("bounds")
         required = {"dataset", "id", "model", "summary", "rho", value_column}
+        if bound_columns:
+            required.update(bound_columns)
         missing = sorted(required.difference(data.columns))
         if missing:
             raise ValueError(f"Classification data is missing columns: {missing}")
-        frame = data[["dataset", "id", "model", "summary", "rho", value_column]].copy()
+        columns = ["dataset", "id", "model", "summary", "rho", value_column]
+        if bound_columns:
+            columns.extend(bound_columns)
+        frame = data[columns].copy()
         frame = frame.dropna(subset=["rho", value_column])
         frame["diagnostic"] = diagnostic
         frame["source_group"] = np.where(
@@ -267,9 +544,17 @@ def diagnostic_classification_rows(
         )
         frame["error_metric"] = metric
         frame["error_value"] = frame[value_column]
-        comparison = frame[value_column].abs() if spec["absolute"] else frame[value_column]
-        frame["error_threshold"] = float(spec["threshold"])
-        frame["error_positive"] = comparison.gt(spec["threshold"])
+        if bound_columns:
+            low_column, high_column = bound_columns
+            frame["error_lower_threshold"] = frame[low_column]
+            frame["error_upper_threshold"] = frame[high_column]
+            frame["error_positive"] = frame[value_column].lt(
+                frame[low_column]
+            ) | frame[value_column].gt(frame[high_column])
+        else:
+            frame["error_lower_threshold"] = 0.0
+            frame["error_upper_threshold"] = float(spec["threshold"])
+            frame["error_positive"] = frame[value_column].gt(spec["threshold"])
         frame["diagnostic_positive"] = frame["rho"].gt(1.0)
         frame["classification"] = np.select(
             [
@@ -292,7 +577,8 @@ def diagnostic_classification_rows(
                     "error_metric",
                     "rho",
                     "error_value",
-                    "error_threshold",
+                    "error_lower_threshold",
+                    "error_upper_threshold",
                     "error_positive",
                     "diagnostic_positive",
                     "classification",
@@ -314,7 +600,8 @@ def calculate_diagnostic_classification(
         "model",
         "summary",
         "error_metric",
-        "error_threshold",
+        "error_lower_threshold",
+        "error_upper_threshold",
     ]
     counts = (
         rows.groupby(group_columns, observed=True)["classification"]
@@ -343,6 +630,20 @@ def calculate_diagnostic_classification(
     counts["precision"] = divide(tp, tp + fp)
     counts["recall"] = divide(tp, tp + fn)
     counts["f1"] = divide(2.0 * tp, 2.0 * tp + fp + fn)
+    auc = (
+        rows.groupby(group_columns, observed=True)
+        .apply(
+            lambda group: (
+                roc_auc_score(group["error_positive"], group["rho"])
+                if group["error_positive"].nunique() == 2
+                else np.nan
+            ),
+            include_groups=False,
+        )
+        .rename("auc")
+        .reset_index()
+    )
+    counts = counts.merge(auc, on=group_columns, how="left", validate="one_to_one")
     return counts.sort_values(
         ["source_group", "model", "summary", "error_metric"]
     ).reset_index(drop=True)
@@ -427,9 +728,17 @@ def _load_cached_frames(
             raise FileNotFoundError(
                 "Missing cached diagnostics:\n" + "\n".join(missing)
             )
-        diagnostics[label] = pd.read_csv(
+        diagnostic = pd.read_csv(
             paths["diagnostic"], keep_default_na=False
         ).assign(summary=label)
+        references = load_references(reference_suite_path(config.summary_label))
+        for model in MODELS:
+            median = float(references[model][metric]["median"])
+            diagnostic[f"dm_median_{model}"] = median
+            diagnostic[f"rho_{model}"] = _normalize_distance(
+                diagnostic[f"d_{model}"], median, diagnostic[f"dm_high_{model}"]
+            )
+        diagnostics[label] = diagnostic
         posteriors[label] = load_posterior_diagnostic(paths["posterior"]).assign(
             summary=label
         )
@@ -468,7 +777,11 @@ def pmp_long(frame: pd.DataFrame, models: tuple[str, ...]) -> pd.DataFrame:
                     "model": model,
                     "model_title": MODEL_TITLES[model],
                     "rho": frame[f"rho_{model}"],
-                    "rho_low": frame[f"dm_low_{model}"] / frame[f"dm_high_{model}"],
+                    "rho_low": _normalize_distance(
+                        frame[f"dm_low_{model}"],
+                        frame[f"dm_median_{model}"],
+                        frame[f"dm_high_{model}"],
+                    ),
                     "gold_pmp": frame[f"gold_pmp_{model}"],
                     "signed_pmp_error": frame[f"signed_pmp_error_{model}"],
                     "at_least_one_not_high_surprise": frame[
@@ -492,7 +805,11 @@ def logml_long(frame: pd.DataFrame, models: tuple[str, ...]) -> pd.DataFrame:
                     "id": frame["id"],
                     "model": model,
                     "rho": frame[f"rho_{model}"],
-                    "rho_low": frame[f"dm_low_{model}"] / frame[f"dm_high_{model}"],
+                    "rho_low": _normalize_distance(
+                        frame[f"dm_low_{model}"],
+                        frame[f"dm_median_{model}"],
+                        frame[f"dm_high_{model}"],
+                    ),
                     "signed_logml_error": signed_ln,
                     "logml_error": signed_ln / np.log(10.0),
                     "at_least_one_not_high_surprise": frame[
@@ -544,9 +861,10 @@ def prepare_rho_error_data(
                         "summary": summary,
                         "model": model,
                         "rho": diagnostic[f"rho_{model}"],
-                        "rho_low": (
-                            diagnostic[f"dm_low_{model}"]
-                            / diagnostic[f"dm_high_{model}"]
+                        "rho_low": _normalize_distance(
+                            diagnostic[f"dm_low_{model}"],
+                            diagnostic[f"dm_median_{model}"],
+                            diagnostic[f"dm_high_{model}"],
                         ),
                         "logml_error": signed_ln / np.log(10.0),
                         "pmp_error": diagnostic[f"signed_pmp_error_{model}"],
@@ -748,29 +1066,71 @@ def _add_pmp_extremum(
 
 def _calibrated_panel_thresholds(
     panel: pd.DataFrame,
-    threshold_column: str,
+    threshold_columns: tuple[str, ...],
     overlay_order: tuple[str, ...],
     overlay_column: str,
-    symmetric: bool,
 ) -> dict[str, tuple[float, ...]]:
-    """Return the single calibrated threshold assigned to each plotted overlay."""
+    """Return the calibrated bounds assigned to each plotted overlay."""
     output = {}
     for label in overlay_order:
-        values = (
-            pd.to_numeric(
-                panel.loc[panel[overlay_column].eq(label), threshold_column],
-                errors="coerce",
+        bounds = []
+        for threshold_column in threshold_columns:
+            values = (
+                pd.to_numeric(
+                    panel.loc[panel[overlay_column].eq(label), threshold_column],
+                    errors="coerce",
+                )
+                .dropna()
+                .unique()
             )
-            .dropna()
-            .unique()
-        )
-        if len(values) != 1:
-            raise ValueError(
-                f"Expected one {threshold_column} for {label}; found {len(values)}"
-            )
-        threshold = float(values[0])
-        output[label] = (-threshold, threshold) if symmetric else (threshold,)
+            if len(values) != 1:
+                raise ValueError(
+                    f"Expected one {threshold_column} for {label}; found {len(values)}"
+                )
+            bounds.append(float(values[0]))
+        output[label] = tuple(bounds)
     return output
+
+
+def _select_plot_summaries(
+    data: pd.DataFrame,
+    overlay_order: tuple[str, ...],
+    overlay_column: str,
+) -> pd.DataFrame:
+    """Keep S=6D in result tables while excluding it from displayed overlays."""
+    return data.loc[data[overlay_column].isin(overlay_order)].copy()
+
+
+def _legend_layout(
+    handles: list,
+    *,
+    summary_count: int,
+    model_count: int,
+) -> tuple[list, int, int]:
+    """Keep three summaries together above three context legend entries."""
+    context_count = len(handles) - summary_count
+    if model_count == 2 and summary_count == 3 and context_count == 3:
+        summaries = handles[:summary_count]
+        context = handles[summary_count:]
+        interleaved = [item for pair in zip(summaries, context, strict=True) for item in pair]
+        return interleaved, 3, 2
+    columns = min(len(handles), 4 if model_count == 2 else 7)
+    rows = int(np.ceil(len(handles) / columns))
+    return handles, columns, rows
+
+
+def _remove_stale_metric_figures(
+    directory: Path,
+    current_filenames: set[str],
+) -> None:
+    """Remove known generated variants that are not part of the active display."""
+    known_filenames = {
+        *(spec["filename"] for spec in CALIBRATED_METRIC_PLOTS.values()),
+        *(spec["filename"] for spec in RAW_CALIBRATED_METRIC_PLOTS.values()),
+        *LEGACY_CALIBRATED_FIGURE_FILENAMES,
+    }
+    for filename in known_filenames.difference(current_filenames):
+        (directory / filename).unlink(missing_ok=True)
 
 
 def plot_rho_error_overlay(
@@ -781,19 +1141,28 @@ def plot_rho_error_overlay(
     path: str | Path,
     *,
     diagnostic: str,
-    overlay_order: tuple[str, ...] = tuple(SUMMARY_COLORS),
+    overlay_order: tuple[str, ...] = PLOT_SUMMARY_LABELS,
     overlay_colors: dict[str, str] = SUMMARY_COLORS,
     overlay_column: str = "summary",
     loess_frac: float | None = None,
     show_loess: bool = True,
     calibrated_thresholds: bool = False,
+    normalize_metrics: bool = True,
+    xscale: str | None = None,
+    yscale: str = "linear",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = 1.0,
 ) -> Path:
     """Plot colored overlays, optionally with LOWESS curves."""
     if diagnostic not in DIAGNOSTIC_XLABELS:
         raise ValueError(f"Unknown diagnostic: {diagnostic}")
     if value not in METRIC_PLOTS:
         raise ValueError(f"Unknown value: {value}")
-    plot_specs = CALIBRATED_METRIC_PLOTS if calibrated_thresholds else METRIC_PLOTS
+    plot_specs = (
+        _calibrated_plot_specs(normalize_metrics)
+        if calibrated_thresholds
+        else METRIC_PLOTS
+    )
     spec = plot_specs[value]
     y_column = spec["column"]
     thresholds = (
@@ -801,24 +1170,26 @@ def plot_rho_error_overlay(
         if calibrated_thresholds
         else tuple(spec["thresholds"])
     )
+    threshold_columns = spec.get("threshold_columns")
     threshold_column = spec.get("threshold_column")
+    if threshold_columns is None and threshold_column is not None:
+        threshold_columns = (threshold_column,)
     all_thresholds: tuple[float, ...] = thresholds
-    if calibrated_thresholds and threshold_column is not None:
-        if threshold_column not in data:
-            raise ValueError(f"Plot data has no {threshold_column}")
-        positive = tuple(
-            pd.to_numeric(data[threshold_column], errors="coerce").dropna().unique()
-        )
-        all_thresholds = (
-            tuple(value for threshold in positive for value in (-threshold, threshold))
-            if spec["symmetric_threshold"]
-            else positive
+    if calibrated_thresholds and threshold_columns is not None:
+        missing = sorted(set(threshold_columns).difference(data.columns))
+        if missing:
+            raise ValueError(f"Plot data is missing threshold columns: {missing}")
+        all_thresholds = tuple(
+            value
+            for column in threshold_columns
+            for value in pd.to_numeric(data[column], errors="coerce").dropna().unique()
         )
     frac = LOWESS_FRAC[source_group] if loess_frac is None else loess_frac
-    reference_data = data.loc[
-        data["dataset"].ne("empirical")
+    source_data = _select_plot_summaries(data, overlay_order, overlay_column)
+    reference_data = source_data.loc[
+        source_data["dataset"].ne("empirical")
         if source_group == "simulated"
-        else data["dataset"].eq("empirical")
+        else source_data["dataset"].eq("empirical")
     ].copy()
     plot_data = (
         _central_interval(
@@ -850,6 +1221,8 @@ def plot_rho_error_overlay(
         if spec["sharey"]
         else None
     )
+    if value == "posterior_mmd" and shared_y is not None:
+        shared_y = _nonnegative_plot_limits(shared_y[1])
 
     for ax, model in zip(axes, models, strict=True):
         reference_panel = reference_data.loc[reference_data["model"].eq(model)]
@@ -860,52 +1233,60 @@ def plot_rho_error_overlay(
             .reindex(overlay_order)
             .dropna()
         )
-        if not rho_low.empty:
-            ax.axvspan(
-                float(rho_low.min()),
-                1.0,
-                color=TYPICAL_SET_FILL,
-                alpha=0.70,
-                zorder=0,
-            )
-            for label, lower_bound in rho_low.items():
-                ax.axvline(
-                    float(lower_bound),
-                    color=overlay_colors[label],
-                    linestyle="--",
-                    linewidth=0.9,
-                    alpha=0.9,
-                    zorder=1,
-                )
-        ax.axvline(1.0, color="0.2", linestyle="--", linewidth=1.0, zorder=1)
         panel_thresholds = None
-        if calibrated_thresholds and threshold_column is not None:
+        if calibrated_thresholds and threshold_columns is not None:
             panel_thresholds = _calibrated_panel_thresholds(
                 reference_panel,
-                threshold_column,
+                threshold_columns,
                 overlay_order,
                 overlay_column,
-                spec["symmetric_threshold"],
             )
-            for label, values in panel_thresholds.items():
-                for threshold in values:
+            active_thresholds = tuple(
+                threshold
+                for values in panel_thresholds.values()
+                for threshold in values
+            )
+            panel_bounds_vary = len(set(panel_thresholds.values())) > 1
+            threshold_sets = (
+                ((None, tuple(sorted(set(active_thresholds)))),)
+                if normalize_metrics and not panel_bounds_vary
+                else tuple(panel_thresholds.items())
+            )
+            for label, bounds in threshold_sets:
+                plotted_bounds = (
+                    bounds[1:]
+                    if value == "posterior_mmd" and not normalize_metrics
+                    else bounds
+                )
+                for threshold in plotted_bounds:
                     ax.axhline(
                         threshold,
-                        color=overlay_colors[label],
+                        color="0.35" if label is None else overlay_colors[label],
                         linestyle=":",
-                        linewidth=1.0,
+                        linewidth=THRESHOLD_LINEWIDTH,
                         alpha=0.9,
                         zorder=1,
                     )
         else:
+            active_thresholds = thresholds
             for threshold in thresholds:
                 ax.axhline(
                     threshold,
                     color="0.35",
                     linestyle=":",
-                    linewidth=1.0,
+                    linewidth=THRESHOLD_LINEWIDTH,
                     zorder=1,
                 )
+        if not rho_low.empty:
+            y_band = _threshold_band(active_thresholds)
+            _shade_typical_set(
+                ax,
+                float(rho_low.min()),
+                y_band,
+            )
+        if value == "posterior_mmd":
+            ax.axhline(0.0, color="0.55", linewidth=0.7, zorder=1)
+        ax.axvline(1.0, color="0.2", linestyle="--", linewidth=1.0, zorder=1)
 
         for label in overlay_order:
             overlay = panel.loc[panel[overlay_column].eq(label)].dropna(
@@ -935,15 +1316,21 @@ def plot_rho_error_overlay(
                 _add_pmp_extremum(ax, overlay, color)
 
         ax.set_title(MODEL_TITLES[model], fontsize=12)
-        if spec["xscale"] == "symlog":
-            ax.set_xscale(
-                "symlog",
-                base=RHO_SYMLOG_BASE,
-                linthresh=RHO_SYMLOG_LINTHRESH,
-                linscale=RHO_SYMLOG_LINSCALE,
-            )
-        else:
-            ax.set_xscale(spec["xscale"])
+        active_xscale = spec["xscale"] if xscale is None else xscale
+        _set_axis_scale(
+            ax,
+            "x",
+            active_xscale,
+            linthresh=x_symlog_linthresh,
+        )
+        _set_axis_scale(
+            ax,
+            "y",
+            yscale,
+            linthresh=y_symlog_linthresh,
+        )
+        if yscale == "symlog":
+            ax.yaxis.set_major_formatter(FuncFormatter(_compact_tick_label))
         ax.set_xlim(x_limits)
         if shared_y is not None:
             ax.set_ylim(shared_y)
@@ -955,23 +1342,34 @@ def plot_rho_error_overlay(
                     for values in panel_thresholds.values()
                     for value in values
                 )
-            ax.set_ylim(_limits(panel[y_column], include=panel_limits))
+            panel_y_limits = _limits(panel[y_column], include=panel_limits)
+            if value == "posterior_mmd":
+                panel_y_limits = _nonnegative_plot_limits(panel_y_limits[1])
+            ax.set_ylim(panel_y_limits)
         ax.set_xlabel(DIAGNOSTIC_XLABELS[diagnostic], fontsize=11)
         ax.grid(color="0.90", linewidth=0.6, alpha=0.7)
         ax.spines[["top", "right"]].set_visible(False)
         ax.tick_params(labelsize=9)
 
-    fig.supylabel(spec["ylabel"], x=0.01, fontsize=11)
+    fig.supylabel(
+        spec["ylabel"],
+        x=0.04 if len(models) == 2 else 0.025,
+        fontsize=11,
+        ha="center",
+        va="center",
+        multialignment="center",
+    )
     fig.suptitle(
         "Simulated datasets" if source_group == "simulated" else "Empirical dataset",
         y=0.99,
         fontsize=12,
     )
-    handles = _summary_handles(
+    summary_handles = _summary_handles(
         overlay_order,
         overlay_colors,
         show_line=show_loess,
     )
+    handles = list(summary_handles)
     handles.extend(_model_match_handles(plot_data))
     handles.append(
         Patch(
@@ -981,18 +1379,23 @@ def plot_rho_error_overlay(
             label="typical set",
         )
     )
+    handles, legend_columns, legend_rows = _legend_layout(
+        handles,
+        summary_count=len(summary_handles),
+        model_count=len(models),
+    )
     fig.legend(
         handles=handles,
         loc="lower center",
         bbox_to_anchor=(0.5, 0.015),
-        ncol=min(len(handles), 4 if len(models) == 2 else 7),
+        ncol=legend_columns,
         frameon=False,
         fontsize=9,
     )
     fig.subplots_adjust(
-        left=0.10 if len(models) == 2 else 0.07,
+        left=0.14 if len(models) == 2 else 0.09,
         right=0.99,
-        bottom=0.31 if len(models) == 2 else 0.24,
+        bottom=(0.29 if legend_rows == 2 else 0.24) if len(models) == 2 else 0.24,
         top=0.83,
         wspace=0.22,
     )
@@ -1018,14 +1421,18 @@ def run_summary_dimension_comparison(
     pmp_source: str | None = None,
     cached_frames: tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]
     | None = None,
-    calibration_threshold_path: str | Path | None = None,
+    calibration_threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
+    xscale: str | None = None,
+    yscale: AxisScaleSpec = "linear",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = 1.0,
+    normalize_metrics: bool = True,
 ) -> dict[str, object]:
-    """Generate the requested three figures from existing saved results."""
+    """Generate figures using well-specified NPE--MCMC reference thresholds."""
     source = pmp_source or _infer_pmp_source(models)
     diagnostics, posteriors = cached_frames or _load_cached_frames(
         metric, summary_specs
     )
-    calibrated = calibration_threshold_path is not None
     data = prepare_rho_error_data(
         diagnostics,
         posteriors,
@@ -1033,26 +1440,22 @@ def run_summary_dimension_comparison(
         pmp_source=source,
         posterior_mmd_column="observed_mmd",
     )
-    if calibrated:
-        data = _attach_calibration_thresholds(
-            data,
-            summary_specs,
-            calibration_threshold_path,
-        )
+    data = _attach_calibration_thresholds(
+        data,
+        summary_specs,
+        calibration_threshold_path,
+    )
     output_root = (
         Path(output_root) if output_root else _default_output_root(metric, models)
     )
-    classification = None
-    classification_path = None
-    if calibrated:
-        classification = calculate_diagnostic_classification(data, metric)
-        classification_path = output_root / "classification_metrics.csv"
-        classification_path.parent.mkdir(parents=True, exist_ok=True)
-        classification.to_csv(classification_path, index=False)
+    classification = calculate_diagnostic_classification(data, metric)
+    classification_path = output_root / "classification_metrics.csv"
+    classification_path.parent.mkdir(parents=True, exist_ok=True)
+    classification.to_csv(classification_path, index=False)
 
     manifest = []
     for source_group in ("simulated", "empirical"):
-        plot_specs = CALIBRATED_METRIC_PLOTS if calibrated else METRIC_PLOTS
+        plot_specs = _calibrated_plot_specs(normalize_metrics)
         for value, spec in plot_specs.items():
             path = plot_rho_error_overlay(
                 data,
@@ -1061,7 +1464,12 @@ def run_summary_dimension_comparison(
                 source_group,
                 output_root / source_group / spec["filename"],
                 diagnostic=metric,
-                calibrated_thresholds=calibrated,
+                calibrated_thresholds=True,
+                normalize_metrics=normalize_metrics,
+                xscale=xscale,
+                yscale=_resolve_metric_scale(yscale, value),
+                x_symlog_linthresh=x_symlog_linthresh,
+                y_symlog_linthresh=y_symlog_linthresh,
             )
             manifest.append(
                 {
@@ -1071,6 +1479,10 @@ def run_summary_dimension_comparison(
                     "path": str(path),
                 }
             )
+        _remove_stale_metric_figures(
+            output_root / source_group,
+            {spec["filename"] for spec in plot_specs.values()},
+        )
     return {
         "manifest": pd.DataFrame(manifest),
         "models": tuple(models),
@@ -1087,18 +1499,19 @@ def run_comparison_pipeline(
     model_sets: dict[str, tuple[str, ...]] = MODEL_SETS,
     summary_specs: SummarySpecs = WITH_MMD_SUMMARY_SPECS,
     output_root: str | Path | None = None,
-    calibration_threshold_path: str | Path | None = None,
+    calibration_threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
+    xscale: str | None = None,
+    yscale: AxisScaleSpec = "linear",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = 1.0,
+    normalize_metrics: bool = True,
 ) -> dict[str, dict[str, object]]:
-    """Create four-model and M1/M3 figures while loading each cache only once."""
+    """Create figures using well-specified NPE--MCMC reference thresholds."""
     comparisons: dict[str, dict[str, object]] = {}
     for metric in metrics:
         cached = _load_cached_frames(metric, summary_specs)
         for name, models in model_sets.items():
-            pmp_source = (
-                "four_model"
-                if calibration_threshold_path is not None
-                else PMP_SOURCES[name]
-            )
+            pmp_source = "four_model"
             comparisons[f"{name}_{metric}"] = run_summary_dimension_comparison(
                 models=models,
                 metric=metric,
@@ -1106,6 +1519,11 @@ def run_comparison_pipeline(
                 pmp_source=pmp_source,
                 cached_frames=cached,
                 calibration_threshold_path=calibration_threshold_path,
+                xscale=xscale,
+                yscale=yscale,
+                x_symlog_linthresh=x_symlog_linthresh,
+                y_symlog_linthresh=y_symlog_linthresh,
+                normalize_metrics=normalize_metrics,
                 output_root=(
                     Path(output_root) / name / metric
                     if output_root is not None
@@ -1121,14 +1539,24 @@ def run_calibrated_comparison_pipeline(
     summary_specs: SummarySpecs = NO_MMD_SUMMARY_SPECS,
     output_root: str | Path | None = None,
     threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
+    xscale: str | None = None,
+    yscale: AxisScaleSpec = "linear",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = 1.0,
+    normalize_metrics: bool = True,
 ) -> dict[str, dict[str, object]]:
-    """Run the original comparison layout with well-specified 95% thresholds."""
+    """Run the comparison layout with calibrated metric-specific bounds."""
     return run_comparison_pipeline(
         metrics=metrics,
         model_sets=model_sets,
         summary_specs=summary_specs,
         output_root=output_root,
         calibration_threshold_path=threshold_path,
+        xscale=xscale,
+        yscale=yscale,
+        x_symlog_linthresh=x_symlog_linthresh,
+        y_symlog_linthresh=y_symlog_linthresh,
+        normalize_metrics=normalize_metrics,
     )
 
 
@@ -1265,7 +1693,7 @@ def display_training_variant_suite(
 # Diagnostic visualization suite used by notebooks/loess_regression.ipynb.
 VISUALIZATION_MODELS = ("m1", "m3")
 DIAGNOSTICS = ("density", "l2", "linf", "mmd")
-VISUALIZATION_SUMMARY_LABELS = tuple(SUMMARY_COLORS)
+VISUALIZATION_SUMMARY_LABELS = PLOT_SUMMARY_LABELS
 VISUALIZATION_SOURCES = (
     "simulated_from_m0",
     "simulated_from_m1",
@@ -1301,14 +1729,14 @@ VISUALIZATION_VALUE_SPECS = {
     },
     "signed_logml_error": {
         "ylabel": r"$\log\widehat{p}(y\mid M_j)-\log p(y\mid M_j)$",
-        "bounds": (-LOGML_ERROR_BOUND, LOGML_ERROR_BOUND),
+        "bounds": (),
         "signed": True,
         "nonnegative": False,
         "independent_y": True,
     },
     "signed_pmp_error": {
         "ylabel": r"$\widehat{p}(M_j\mid y)-p(M_j\mid y)$",
-        "bounds": (-PMP_ERROR_BOUND, PMP_ERROR_BOUND),
+        "bounds": (),
         "signed": True,
         "nonnegative": False,
         "independent_y": True,
@@ -1318,14 +1746,14 @@ VISUALIZATION_VALUE_SPECS = {
             r"$\left|\log\widehat{p}(y\mid M_j)"
             r"-\log p(y\mid M_j)\right|$"
         ),
-        "bounds": (LOGML_ERROR_BOUND,),
+        "bounds": (),
         "signed": False,
         "nonnegative": True,
         "independent_y": True,
     },
     "absolute_pmp_error": {
         "ylabel": r"$\left|\widehat{p}(M_j\mid y)-p(M_j\mid y)\right|$",
-        "bounds": (PMP_ERROR_BOUND,),
+        "bounds": (),
         "signed": False,
         "nonnegative": True,
         "independent_y": True,
@@ -1603,28 +2031,24 @@ def plot_visualization_overlay(
             .median()
             .reindex(VISUALIZATION_SUMMARY_LABELS)
         )
-        ax.axvspan(
+        _shade_typical_set(
+            ax,
             float(rho_low.min()),
-            1.0,
-            color=TYPICAL_SET_FILL,
-            alpha=0.70,
-            zorder=0,
+            _threshold_band(bounds),
         )
         ax.axvline(1.0, color="0.25", linestyle="--", linewidth=0.9)
         if value_spec["signed"]:
             ax.axhline(0.0, color="0.35", linewidth=0.8)
         for bound in bounds:
-            ax.axhline(bound, color="#7A0276", linestyle=":", linewidth=1.0)
+            ax.axhline(
+                bound,
+                color="#7A0276",
+                linestyle=":",
+                linewidth=THRESHOLD_LINEWIDTH,
+            )
         for summary in VISUALIZATION_SUMMARY_LABELS:
             summary_data = panel.loc[panel["summary"].eq(summary)]
             color = SUMMARY_COLORS[summary]
-            ax.axvline(
-                float(rho_low[summary]),
-                color=color,
-                linestyle=":",
-                linewidth=0.8,
-                alpha=0.8,
-            )
             _scatter_model_matches(
                 ax,
                 summary_data,
@@ -1695,18 +2119,19 @@ def _aligned_symlog_limits_by_group(
     group_order: tuple[str, ...],
     value_columns: tuple[str, ...] = ("rho", "rho_low"),
     anchor: float = 1.0,
+    linthresh: float = RHO_SYMLOG_LINTHRESH,
 ) -> dict[str, tuple[float, float]]:
     """Give each group its own limits while aligning one symlog anchor."""
     transform = SymmetricalLogTransform(
         base=RHO_SYMLOG_BASE,
-        linthresh=RHO_SYMLOG_LINTHRESH,
+        linthresh=linthresh,
         linscale=RHO_SYMLOG_LINSCALE,
     )
     all_values = pd.concat(
         [*(data[column] for column in value_columns), pd.Series([anchor])],
         ignore_index=True,
     )
-    global_limits = _symlog_padded_limits(all_values)
+    global_limits = _symlog_padded_limits(all_values, linthresh=linthresh)
     global_transformed = transform.transform(np.asarray(global_limits))
     transformed_anchor = float(transform.transform(np.asarray([anchor]))[0])
     anchor_fraction = (transformed_anchor - float(global_transformed[0])) / (
@@ -1724,7 +2149,7 @@ def _aligned_symlog_limits_by_group(
             ],
             ignore_index=True,
         )
-        padded_limits = _symlog_padded_limits(group_values)
+        padded_limits = _symlog_padded_limits(group_values, linthresh=linthresh)
         transformed_limits = transform.transform(np.asarray(padded_limits))
         left_span = transformed_anchor - float(transformed_limits[0])
         right_span = float(transformed_limits[1]) - transformed_anchor
@@ -1741,6 +2166,39 @@ def _aligned_symlog_limits_by_group(
         )
         aligned_limits = transform.inverted().transform(aligned_transformed)
         limits[group] = (float(aligned_limits[0]), float(aligned_limits[1]))
+    return limits
+
+
+def _axis_limits_by_group(
+    data: pd.DataFrame,
+    group_column: str,
+    group_order: tuple[str, ...],
+    *,
+    scale: str,
+    linthresh: float,
+    value_columns: tuple[str, ...] = ("rho", "rho_low"),
+    anchor: float = 1.0,
+) -> dict[str, tuple[float, float]]:
+    """Calculate per-panel limits that match the selected x-axis scale."""
+    if scale not in AXIS_SCALES:
+        raise ValueError(f"xscale must be one of {AXIS_SCALES}; got {scale!r}")
+    if scale == "symlog":
+        return _aligned_symlog_limits_by_group(
+            data,
+            group_column,
+            group_order,
+            value_columns=value_columns,
+            anchor=anchor,
+            linthresh=linthresh,
+        )
+    limits = {}
+    for group in group_order:
+        group_data = data.loc[data[group_column].eq(group)]
+        values = pd.concat(
+            [*(group_data[column] for column in value_columns)],
+            ignore_index=True,
+        )
+        limits[group] = _visualization_limits(values, include=(anchor,))
     return limits
 
 
@@ -1815,10 +2273,13 @@ def plot_gold_pmp_colored_pmp_error_grid(
     diagnostic: str,
     output_stem: str | Path,
     *,
-    threshold_column: str | None = None,
+    threshold_columns: tuple[str, str] | None = None,
     value_column: str = "signed_pmp_error",
-    fixed_threshold: float = PMP_ERROR_BOUND,
     ylabel: str = r"$\widehat{p}(M_j\mid y)-p(M_j\mid y)$",
+    xscale: str = RHO_XSCALE,
+    yscale: str = "linear",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = PMP_SYMLOG_LINTHRESH,
 ) -> dict[str, Path]:
     """Plot the empirical PMP-error grid with one pooled LOWESS per panel."""
     if diagnostic not in DIAGNOSTIC_LABELS:
@@ -1832,8 +2293,8 @@ def plot_gold_pmp_colored_pmp_error_grid(
         value_column,
         "at_least_one_not_high_surprise",
     }
-    if threshold_column is not None:
-        required.add(threshold_column)
+    if threshold_columns is not None:
+        required.update(threshold_columns)
     missing = sorted(required.difference(data.columns))
     if missing:
         raise ValueError(f"Gold-PMP grid is missing columns: {missing}")
@@ -1864,18 +2325,23 @@ def plot_gold_pmp_colored_pmp_error_grid(
         [plot_data["rho"], plot_data["rho_low"], pd.Series([1.0])],
         ignore_index=True,
     )
-    x_limits = _symlog_padded_limits(x_values)
-    threshold_values = (
-        pd.to_numeric(plot_data[threshold_column], errors="coerce").dropna().unique()
-        if threshold_column
-        else np.asarray([fixed_threshold])
+    x_limits = (
+        _symlog_padded_limits(x_values, linthresh=x_symlog_linthresh)
+        if xscale == "symlog"
+        else _visualization_limits(x_values, include=(1.0,))
     )
+    if threshold_columns is not None:
+        threshold_values = np.concatenate(
+            [
+                pd.to_numeric(plot_data[column], errors="coerce").dropna().unique()
+                for column in threshold_columns
+            ]
+        )
+    else:
+        threshold_values = np.asarray([], dtype=float)
     y_limits = _visualization_limits(
         plot_data[value_column],
-        include=tuple(
-            [0.0]
-            + [value for threshold in threshold_values for value in (-threshold, threshold)]
-        ),
+        include=(0.0, *threshold_values),
     )
     last_scatter = None
     for row, summary in enumerate(VISUALIZATION_SUMMARY_LABELS):
@@ -1884,35 +2350,51 @@ def plot_gold_pmp_colored_pmp_error_grid(
             panel = plot_data.loc[
                 plot_data["summary"].eq(summary) & plot_data["model"].eq(model)
             ].dropna(subset=["rho", "rho_low", "gold_pmp", value_column])
-            ax.set_xscale("symlog", linthresh=1.0)
+            _set_axis_scale(
+                ax,
+                "x",
+                xscale,
+                linthresh=x_symlog_linthresh,
+            )
+            _set_axis_scale(
+                ax,
+                "y",
+                yscale,
+                linthresh=y_symlog_linthresh,
+            )
             ax.set_xlim(x_limits)
             ax.set_ylim(y_limits)
             ax.axhline(0.0, color="0.35", linewidth=0.8, zorder=1)
-            panel_threshold = fixed_threshold
-            if threshold_column is not None and not panel.empty:
-                values = pd.to_numeric(panel[threshold_column], errors="coerce").dropna().unique()
-                if len(values) != 1:
-                    raise ValueError(
-                        f"Expected one {threshold_column} for {summary}/{model}; "
-                        f"found {len(values)}"
-                    )
-                panel_threshold = float(values[0])
-            for threshold in (-panel_threshold, panel_threshold):
+            panel_bounds: tuple[float, ...] = ()
+            active_columns = threshold_columns or ()
+            if active_columns and not panel.empty:
+                values = []
+                for column_name in active_columns:
+                    unique = pd.to_numeric(
+                        panel[column_name], errors="coerce"
+                    ).dropna().unique()
+                    if len(unique) != 1:
+                        raise ValueError(
+                            f"Expected one {column_name} for {summary}/{model}; "
+                            f"found {len(unique)}"
+                        )
+                    values.append(float(unique[0]))
+                panel_bounds = tuple(values)
+            for threshold in panel_bounds:
                 ax.axhline(
                     threshold,
                     color="0.35",
                     linestyle="--",
-                    linewidth=1.0,
+                    linewidth=THRESHOLD_LINEWIDTH,
                     zorder=1,
                 )
             if not panel.empty:
                 rho_low = float(panel["rho_low"].median())
-                ax.axvspan(
+                _shade_typical_set(
+                    ax,
                     rho_low,
-                    1.0,
-                    color=TYPICAL_SET_FILL,
+                    panel_bounds,
                     alpha=0.55,
-                    zorder=0,
                 )
                 ax.axvline(
                     1.0,
@@ -1925,7 +2407,8 @@ def plot_gold_pmp_colored_pmp_error_grid(
                     _add_gold_pmp_max_error(ax, panel, value_column)
                 if SHOW_GOLD_PMP_BOUNDARY_HIT:
                     boundary_hits = panel.loc[
-                        panel[value_column].abs().gt(panel_threshold)
+                        panel[value_column].lt(panel_bounds[0])
+                        | panel[value_column].gt(panel_bounds[-1])
                     ].sort_values("rho")
                     if not boundary_hits.empty:
                         boundary_x = float(boundary_hits.iloc[0]["rho"])
@@ -2039,7 +2522,14 @@ def plot_gold_pmp_colored_pmp_error_grid(
         )
         strip.set_xticks([])
         strip.set_yticks([])
-    fig.supylabel(ylabel, x=0.015, fontsize=18)
+    fig.supylabel(
+        ylabel,
+        x=0.04,
+        fontsize=18,
+        ha="center",
+        va="center",
+        multialignment="center",
+    )
     fig.legend(
         handles=_gold_pmp_grid_handles(),
         loc="lower center",
@@ -2106,16 +2596,36 @@ def generate_gold_pmp_lowess_grid(
     diagnostic: str,
     loss_variant: str,
     output_root: str | Path | None = None,
+    *,
+    summary_specs: SummarySpecs | None = None,
+    threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
+    xscale: str = RHO_XSCALE,
+    yscale: AxisScaleSpec = "linear",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = PMP_SYMLOG_LINTHRESH,
+    normalize_metrics: bool = True,
 ) -> dict[str, Path]:
     """Generate only the empirical 4x2 Gold-PMP-colored LOWESS grid."""
-    if loss_variant not in LOSS_VARIANTS:
-        raise ValueError(f"loss_variant must be one of {tuple(LOSS_VARIANTS)}")
-    _, summary_specs = LOSS_VARIANTS[loss_variant]
+    if summary_specs is None:
+        if loss_variant not in LOSS_VARIANTS:
+            raise ValueError(f"loss_variant must be one of {tuple(LOSS_VARIANTS)}")
+        _, summary_specs = LOSS_VARIANTS[loss_variant]
     empirical_data = load_visualization_data(
         diagnostic,
         summary_specs,
         sources=("empirical",),
     )
+    empirical_data["logml_error"] = (
+        empirical_data["signed_logml_error"] / np.log(10.0)
+    )
+    empirical_data["pmp_error"] = empirical_data["signed_pmp_error"]
+    empirical_data = _attach_calibration_thresholds(
+        empirical_data,
+        summary_specs,
+        threshold_path,
+    )
+    value_column = "pmp_error"
+    threshold_columns = ("pmp_error_lower_threshold", "pmp_error_upper_threshold")
     root = (
         Path(output_root)
         if output_root is not None
@@ -2126,6 +2636,13 @@ def generate_gold_pmp_lowess_grid(
         empirical_data,
         diagnostic,
         output_stem,
+        value_column=value_column,
+        threshold_columns=threshold_columns,
+        ylabel=r"$\widehat{p}(M_j\mid y)-p(M_j\mid y)$",
+        xscale=xscale,
+        yscale=_resolve_metric_scale(yscale, "pmp"),
+        x_symlog_linthresh=x_symlog_linthresh,
+        y_symlog_linthresh=y_symlog_linthresh,
     )
 
 
@@ -2190,6 +2707,10 @@ def plot_s4d_diagnostic_gold_pmp_grid(
     diagnostics: tuple[str, ...] = S4D_DIAGNOSTIC_ORDER,
     gold_pmp_cmap: str = GOLD_PMP_HIGH_CONTRAST_CMAP,
     show_max_error: bool = False,
+    xscale: str = RHO_XSCALE,
+    yscale: str = "linear",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = PMP_SYMLOG_LINTHRESH,
 ) -> dict[str, Path]:
     """Plot a 4x2 empirical grid: S=4D only, with one row per diagnostic."""
     required = {
@@ -2241,14 +2762,16 @@ def plot_s4d_diagnostic_gold_pmp_grid(
             + plot_data["model"].astype("string")
         )
     )
-    x_limits_by_panel = _aligned_symlog_limits_by_group(
+    x_limits_by_panel = _axis_limits_by_group(
         limit_data,
         "_rho_panel",
         panel_order,
+        scale=xscale,
+        linthresh=x_symlog_linthresh,
     )
     y_limits = _visualization_limits(
         plot_data["signed_pmp_error"],
-        include=(-PMP_ERROR_BOUND, 0.0, PMP_ERROR_BOUND),
+        include=(0.0,),
     )
     norm = Normalize(vmin=0.0, vmax=1.0)
     cmap = plt.get_cmap(gold_pmp_cmap)
@@ -2259,25 +2782,27 @@ def plot_s4d_diagnostic_gold_pmp_grid(
             panel = plot_data.loc[
                 plot_data["diagnostic"].eq(diagnostic) & plot_data["model"].eq(model)
             ].dropna(subset=["rho", "rho_low", "gold_pmp", "signed_pmp_error"])
-            ax.set_xscale("symlog", linthresh=1.0)
+            _set_axis_scale(
+                ax,
+                "x",
+                xscale,
+                linthresh=x_symlog_linthresh,
+            )
+            _set_axis_scale(
+                ax,
+                "y",
+                yscale,
+                linthresh=y_symlog_linthresh,
+            )
             ax.set_xlim(x_limits_by_panel[f"{diagnostic}|{model}"])
             ax.set_ylim(y_limits)
             ax.axhline(0.0, color="0.35", linewidth=0.8, zorder=1)
-            for threshold in (-PMP_ERROR_BOUND, PMP_ERROR_BOUND):
-                ax.axhline(
-                    threshold,
-                    color="0.35",
-                    linestyle="--",
-                    linewidth=1.0,
-                    zorder=1,
-                )
             if not panel.empty:
-                ax.axvspan(
+                _shade_typical_set(
+                    ax,
                     float(panel["rho_low"].median()),
-                    1.0,
-                    color=TYPICAL_SET_FILL,
+                    None,
                     alpha=0.55,
-                    zorder=0,
                 )
                 if show_max_error:
                     _add_gold_pmp_max_error(ax, panel)
@@ -2397,6 +2922,10 @@ def generate_s4d_diagnostic_gold_pmp_grid(
     output_root: str | Path | None = None,
     gold_pmp_cmap: str = GOLD_PMP_HIGH_CONTRAST_CMAP,
     show_max_error: bool = False,
+    xscale: str = RHO_XSCALE,
+    yscale: AxisScaleSpec = "linear",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = PMP_SYMLOG_LINTHRESH,
 ) -> dict[str, Path]:
     """Load data and generate the S=4D empirical four-diagnostic PMP grid."""
     data = load_s4d_empirical_diagnostic_data(loss_variant=loss_variant)
@@ -2410,6 +2939,10 @@ def generate_s4d_diagnostic_gold_pmp_grid(
         root / loss_variant / "s4d_gold_pmp_by_diagnostic",
         gold_pmp_cmap=gold_pmp_cmap,
         show_max_error=show_max_error,
+        xscale=xscale,
+        yscale=_resolve_metric_scale(yscale, "pmp"),
+        x_symlog_linthresh=x_symlog_linthresh,
+        y_symlog_linthresh=y_symlog_linthresh,
     )
 
 
@@ -2460,6 +2993,10 @@ def _plot_empirical_metric_diagnostic_loess_grid(
     nonnegative: bool = False,
     diagnostics: tuple[str, ...] = S4D_DIAGNOSTIC_ORDER,
     loess_frac: float = LOWESS_FRAC["empirical"],
+    xscale: str = RHO_XSCALE,
+    yscale: str = "linear",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = 1.0,
 ) -> dict[str, Path]:
     """Plot a 4x2 empirical metric grid with colored summary LOWESS curves."""
     required = {
@@ -2519,10 +3056,12 @@ def _plot_empirical_metric_diagnostic_loess_grid(
             + reference_data["model"].astype("string")
         )
     )
-    x_limits_by_panel = _aligned_symlog_limits_by_group(
+    x_limits_by_panel = _axis_limits_by_group(
         limit_data,
         "_rho_panel",
         panel_order,
+        scale=xscale,
+        linthresh=x_symlog_linthresh,
     )
     y_limits = _visualization_limits(
         plot_data[value_column],
@@ -2547,22 +3086,11 @@ def _plot_empirical_metric_diagnostic_loess_grid(
                 .dropna()
             )
             if not rho_low.empty:
-                ax.axvspan(
+                _shade_typical_set(
+                    ax,
                     float(rho_low.min()),
-                    1.0,
-                    color=TYPICAL_SET_FILL,
-                    alpha=0.70,
-                    zorder=0,
+                    _threshold_band(thresholds),
                 )
-                for summary, lower_bound in rho_low.items():
-                    ax.axvline(
-                        float(lower_bound),
-                        color=SUMMARY_COLORS[summary],
-                        linestyle="--",
-                        linewidth=0.9,
-                        alpha=0.9,
-                        zorder=1,
-                    )
             ax.axvline(
                 1.0,
                 color="0.2",
@@ -2575,7 +3103,7 @@ def _plot_empirical_metric_diagnostic_loess_grid(
                     threshold,
                     color="0.35",
                     linestyle=":",
-                    linewidth=1.0,
+                    linewidth=THRESHOLD_LINEWIDTH,
                     zorder=1,
                 )
             ax.axhline(0.0, color="0.55", linewidth=0.7, zorder=1)
@@ -2602,7 +3130,7 @@ def _plot_empirical_metric_diagnostic_loess_grid(
                         points[value_column],
                         frac=loess_frac,
                     )
-                    if loess_on_symlog_x
+                    if loess_on_symlog_x and xscale == "symlog"
                     else _lowess_curve(
                         points["rho"],
                         points[value_column],
@@ -2617,11 +3145,17 @@ def _plot_empirical_metric_diagnostic_loess_grid(
                     zorder=3,
                 )
 
-            ax.set_xscale(
-                "symlog",
-                base=RHO_SYMLOG_BASE,
-                linthresh=RHO_SYMLOG_LINTHRESH,
-                linscale=RHO_SYMLOG_LINSCALE,
+            _set_axis_scale(
+                ax,
+                "x",
+                xscale,
+                linthresh=x_symlog_linthresh,
+            )
+            _set_axis_scale(
+                ax,
+                "y",
+                yscale,
+                linthresh=y_symlog_linthresh,
             )
             ax.set_xlim(x_limits_by_panel[f"{diagnostic}|{model}"])
             ax.set_ylim(y_limits)
@@ -2706,6 +3240,10 @@ def plot_log10_logml_diagnostic_loess_grid(
     output_stem: str | Path,
     diagnostics: tuple[str, ...] = S4D_DIAGNOSTIC_ORDER,
     loess_frac: float = LOWESS_FRAC["empirical"],
+    xscale: str = RHO_XSCALE,
+    yscale: str = "linear",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = LOGML_SYMLOG_LINTHRESH,
 ) -> dict[str, Path]:
     """Plot empirical base-10 logML error for four diagnostics."""
     return _plot_empirical_metric_diagnostic_loess_grid(
@@ -2716,11 +3254,15 @@ def plot_log10_logml_diagnostic_loess_grid(
             r"$\log_{10}\widehat{p}(y\mid M_j)"
             r"-\log_{10}p(y\mid M_j)$"
         ),
-        (-LOGML_ERROR_BOUND, LOGML_ERROR_BOUND),
+        (),
         central_interval=LOGML_CENTRAL_INTERVAL,
         loess_on_symlog_x=True,
         diagnostics=diagnostics,
         loess_frac=loess_frac,
+        xscale=xscale,
+        yscale=yscale,
+        x_symlog_linthresh=x_symlog_linthresh,
+        y_symlog_linthresh=y_symlog_linthresh,
     )
 
 
@@ -2729,6 +3271,10 @@ def plot_posterior_mmd_diagnostic_loess_grid(
     output_stem: str | Path,
     diagnostics: tuple[str, ...] = S4D_DIAGNOSTIC_ORDER,
     loess_frac: float = LOWESS_FRAC["empirical"],
+    xscale: str = RHO_XSCALE,
+    yscale: str = "linear",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = 1.0,
 ) -> dict[str, Path]:
     """Plot empirical raw posterior MMD for four diagnostics."""
     return _plot_empirical_metric_diagnostic_loess_grid(
@@ -2740,6 +3286,10 @@ def plot_posterior_mmd_diagnostic_loess_grid(
         nonnegative=True,
         diagnostics=diagnostics,
         loess_frac=loess_frac,
+        xscale=xscale,
+        yscale=yscale,
+        x_symlog_linthresh=x_symlog_linthresh,
+        y_symlog_linthresh=y_symlog_linthresh,
     )
 
 
@@ -2748,6 +3298,10 @@ def plot_pmp_diagnostic_loess_grid(
     output_stem: str | Path,
     diagnostics: tuple[str, ...] = S4D_DIAGNOSTIC_ORDER,
     loess_frac: float = LOWESS_FRAC["empirical"],
+    xscale: str = RHO_XSCALE,
+    yscale: str = "linear",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = PMP_SYMLOG_LINTHRESH,
 ) -> dict[str, Path]:
     """Plot empirical signed PMP error for four diagnostics."""
     return _plot_empirical_metric_diagnostic_loess_grid(
@@ -2755,15 +3309,23 @@ def plot_pmp_diagnostic_loess_grid(
         output_stem,
         "signed_pmp_error",
         r"$\widehat{p}(M_j\mid y)-p(M_j\mid y)$",
-        (-PMP_ERROR_BOUND, PMP_ERROR_BOUND),
+        (),
         diagnostics=diagnostics,
         loess_frac=loess_frac,
+        xscale=xscale,
+        yscale=yscale,
+        x_symlog_linthresh=x_symlog_linthresh,
+        y_symlog_linthresh=y_symlog_linthresh,
     )
 
 
 def generate_log10_logml_diagnostic_loess_grid(
     loss_variant: str = "without_mmd",
     output_root: str | Path | None = None,
+    xscale: str = RHO_XSCALE,
+    yscale: AxisScaleSpec = "symlog",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = LOGML_SYMLOG_LINTHRESH,
 ) -> dict[str, Path]:
     """Load data and generate the four-diagnostic empirical log10-ML grid."""
     data = load_empirical_diagnostic_comparison_data(loss_variant=loss_variant)
@@ -2775,12 +3337,20 @@ def generate_log10_logml_diagnostic_loess_grid(
     return plot_log10_logml_diagnostic_loess_grid(
         data,
         root / loss_variant / "log10_logml_error_by_diagnostic",
+        xscale=xscale,
+        yscale=_resolve_metric_scale(yscale, "logml"),
+        x_symlog_linthresh=x_symlog_linthresh,
+        y_symlog_linthresh=y_symlog_linthresh,
     )
 
 
 def generate_posterior_mmd_diagnostic_loess_grid(
     loss_variant: str = "without_mmd",
     output_root: str | Path | None = None,
+    xscale: str = RHO_XSCALE,
+    yscale: AxisScaleSpec = "linear",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = 1.0,
 ) -> dict[str, Path]:
     """Load data and generate the four-diagnostic posterior-MMD grid."""
     data = load_empirical_diagnostic_comparison_data(loss_variant=loss_variant)
@@ -2792,12 +3362,20 @@ def generate_posterior_mmd_diagnostic_loess_grid(
     return plot_posterior_mmd_diagnostic_loess_grid(
         data,
         root / loss_variant / "posterior_mmd_by_diagnostic",
+        xscale=xscale,
+        yscale=_resolve_metric_scale(yscale, "posterior_mmd"),
+        x_symlog_linthresh=x_symlog_linthresh,
+        y_symlog_linthresh=y_symlog_linthresh,
     )
 
 
 def generate_pmp_diagnostic_loess_grid(
     loss_variant: str = "without_mmd",
     output_root: str | Path | None = None,
+    xscale: str = RHO_XSCALE,
+    yscale: AxisScaleSpec = "linear",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = PMP_SYMLOG_LINTHRESH,
 ) -> dict[str, Path]:
     """Load data and generate the four-diagnostic empirical PMP-error grid."""
     data = load_empirical_diagnostic_comparison_data(loss_variant=loss_variant)
@@ -2809,6 +3387,10 @@ def generate_pmp_diagnostic_loess_grid(
     return plot_pmp_diagnostic_loess_grid(
         data,
         root / loss_variant / "pmp_error_by_diagnostic",
+        xscale=xscale,
+        yscale=_resolve_metric_scale(yscale, "pmp"),
+        x_symlog_linthresh=x_symlog_linthresh,
+        y_symlog_linthresh=y_symlog_linthresh,
     )
 
 
@@ -2845,6 +3427,11 @@ def generate_calibrated_gold_pmp_lowess_grid(
     threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
     summary_specs: SummarySpecs = NO_MMD_SUMMARY_SPECS,
     output_variant: str = "without_mmd",
+    xscale: str = RHO_XSCALE,
+    yscale: AxisScaleSpec = "linear",
+    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
+    y_symlog_linthresh: float = PMP_SYMLOG_LINTHRESH,
+    normalize_metrics: bool = True,
 ) -> dict[str, Path]:
     """Generate the original empirical PMP grid with calibrated PMP cutoffs."""
     data = load_calibrated_visualization_data(
@@ -2857,10 +3444,19 @@ def generate_calibrated_gold_pmp_lowess_grid(
         if output_root is not None
         else RESULT_DIR / "plots" / "diagnostic_overlays_calibrated_noMMD"
     )
+    value_column = "pmp_error"
+    threshold_columns = ("pmp_error_lower_threshold", "pmp_error_upper_threshold")
     return plot_gold_pmp_colored_pmp_error_grid(
         data,
         diagnostic,
         root / output_variant / diagnostic / f"12_{GOLD_PMP_GRID_KEY}",
+        threshold_columns=threshold_columns,
+        value_column=value_column,
+        ylabel=r"$\widehat{p}(M_j\mid y)-p(M_j\mid y)$",
+        xscale=xscale,
+        yscale=_resolve_metric_scale(yscale, "pmp"),
+        x_symlog_linthresh=x_symlog_linthresh,
+        y_symlog_linthresh=y_symlog_linthresh,
     )
 
 

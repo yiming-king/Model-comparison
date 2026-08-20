@@ -40,14 +40,26 @@ the two Python files can be run directly from the project root:
 /opt/anaconda3/envs/benchmark2/bin/python \
   benchmark/examples/diffusion/calibration/pipeline.py metrics
 
-# Rebuild all three 95% thresholds from the cached per-dataset metrics.
+# Rebuild posterior MMD [0, q95] and signed logML/PMP central 90% thresholds.
 /opt/anaconda3/envs/benchmark2/bin/python \
   benchmark/examples/diffusion/calibration/thresholds.py
+
+# Rebuild the second without-MMD run from its own cached metrics.
+/opt/anaconda3/envs/benchmark2/bin/python \
+  benchmark/examples/diffusion/calibration/thresholds.py \
+  --calibration-root benchmark/examples/diffusion/calibration_outputs_rerun1
 ```
 
 `pipeline.py metrics` writes `calibration_outputs/per_dataset_metrics.csv`.
 `thresholds.py` reads that file and writes `thresholds.csv` plus
-`per_dataset_results.csv`; it does not rerun NPE or MCMC.
+`per_dataset_results.csv`; it does not rerun NPE or MCMC. The defaults encode
+the interval definitions, so neither run needs manual threshold edits after
+regeneration.
+
+Threshold and classification tables retain all four summary dimensions
+(`S=D`, `S=2D`, `S=4D`, and `S=6D`). Summary-diagnostic figures intentionally
+display only `S=D`, `S=2D`, and `S=4D`; `S=6D` is excluded from plotted points,
+curves, threshold lines, legends, and axis-limit calculations.
 
 ## Intentional differences from Simon's original scripts
 

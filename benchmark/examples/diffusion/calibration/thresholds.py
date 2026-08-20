@@ -21,6 +21,8 @@ from ..config import MODELS, PARAM_DIMS
 DEFAULT_CALIBRATION_ROOT = (
     Path(__file__).resolve().parent.parent / "calibration_outputs"
 )
+DEFAULT_POSTERIOR_MMD_QUANTILE = 0.95
+DEFAULT_SIGNED_ERROR_COVERAGE = 0.90
 
 
 GROUP_COLUMNS = (
@@ -36,28 +38,36 @@ GROUP_COLUMNS = (
 class ThresholdRule:
     metric: str
     value_column: str
+    median_column: str
     convergence_scope: str
     aggregation: str
+    interval: str
 
 
 THRESHOLD_RULES = (
     ThresholdRule(
         metric="posterior_mmd",
         value_column="posterior_mmd",
+        median_column="posterior_mmd",
         convergence_scope="matching_model",
         aggregation="matching_model_converged_datasets",
+        interval="nonnegative_upper_quantile",
     ),
     ThresholdRule(
-        metric="absolute_logml_error",
-        value_column="absolute_logml_error",
+        metric="signed_logml_error",
+        value_column="signed_logml_error",
+        median_column="signed_logml_error",
         convergence_scope="matching_model",
         aggregation="matching_model_converged_datasets",
+        interval="central_reference_interval",
     ),
     ThresholdRule(
-        metric="absolute_pmp_error",
-        value_column="absolute_pmp_error",
+        metric="signed_pmp_error",
+        value_column="signed_pmp_error",
+        median_column="signed_pmp_error",
         convergence_scope="all_candidate_models",
         aggregation="all_four_pmp_components_from_all_candidate_converged_datasets",
+        interval="central_reference_interval",
     ),
 )
 
@@ -66,7 +76,11 @@ def _as_bool(value: object) -> bool:
     return str(value).strip().lower() in {"true", "t", "1"}
 
 
-def _selected_values(group: pd.DataFrame, rule: ThresholdRule) -> np.ndarray:
+def _selected_values(
+    group: pd.DataFrame,
+    rule: ThresholdRule,
+    column: str | None = None,
+) -> np.ndarray:
     if rule.convergence_scope == "matching_model":
         mask = group["candidate_model"].eq(group["generating_model"])
         mask &= group["converged"].map(_as_bool)
@@ -75,7 +89,7 @@ def _selected_values(group: pd.DataFrame, rule: ThresholdRule) -> np.ndarray:
     else:
         raise ValueError(f"Unknown convergence scope: {rule.convergence_scope}")
     return (
-        pd.to_numeric(group.loc[mask, rule.value_column], errors="coerce")
+        pd.to_numeric(group.loc[mask, column or rule.value_column], errors="coerce")
         .dropna()
         .to_numpy(dtype=float)
     )
@@ -89,6 +103,7 @@ def _validate_input(frame: pd.DataFrame) -> None:
         "converged",
         "all_candidate_models_converged",
         *(rule.value_column for rule in THRESHOLD_RULES),
+        *(rule.median_column for rule in THRESHOLD_RULES),
     }
     missing = sorted(required.difference(frame.columns))
     if missing:
@@ -97,11 +112,18 @@ def _validate_input(frame: pd.DataFrame) -> None:
 
 def calculate_thresholds(
     frame: pd.DataFrame,
-    quantile: float = 0.95,
+    quantile: float = DEFAULT_POSTERIOR_MMD_QUANTILE,
+    signed_error_coverage: float = DEFAULT_SIGNED_ERROR_COVERAGE,
 ) -> pd.DataFrame:
-    """Calculate all three convergence-filtered calibration thresholds."""
+    """Calculate raw convergence-filtered reference thresholds.
+
+    ``quantile`` is the one-sided upper quantile for non-negative posterior MMD.
+    ``signed_error_coverage`` is the central coverage for signed logML/PMP errors.
+    """
     if not 0.0 < quantile < 1.0:
         raise ValueError("quantile must be between zero and one")
+    if not 0.0 < signed_error_coverage < 1.0:
+        raise ValueError("signed_error_coverage must be between zero and one")
     _validate_input(frame)
 
     rows = []
@@ -117,10 +139,26 @@ def calculate_thresholds(
         }
         for rule in THRESHOLD_RULES:
             values = _selected_values(group, rule)
-            if not len(values):
+            median_values = _selected_values(group, rule, rule.median_column)
+            if not len(values) or not len(median_values):
                 raise ValueError(
-                    f"No converged values for {metadata} / {rule.metric}"
+                    f"No converged threshold/median values for {metadata} / {rule.metric}"
                 )
+            if rule.interval == "nonnegative_upper_quantile":
+                coverage = quantile
+                lower_quantile = 0.0
+                upper_quantile = coverage
+                lower_threshold = 0.0
+            elif rule.interval == "central_reference_interval":
+                coverage = signed_error_coverage
+                tail_probability = (1.0 - coverage) / 2.0
+                lower_quantile = tail_probability
+                upper_quantile = 1.0 - tail_probability
+                lower_threshold = float(
+                    np.quantile(values, lower_quantile, method="linear")
+                )
+            else:
+                raise ValueError(f"Unknown interval rule: {rule.interval}")
             rows.append(
                 {
                     **metadata,
@@ -128,11 +166,15 @@ def calculate_thresholds(
                     "summary_dimension": PARAM_DIMS[metadata["generating_model"]]
                     * int(metadata["summary_multiplier"]),
                     "metric": rule.metric,
-                    "quantile": quantile,
+                    "quantile": coverage,
+                    "lower_quantile": lower_quantile,
+                    "upper_quantile": upper_quantile,
                     "quantile_method": "linear",
+                    "lower_threshold": lower_threshold,
                     "threshold": float(
-                        np.quantile(values, quantile, method="linear")
+                        np.quantile(values, upper_quantile, method="linear")
                     ),
+                    "median": float(np.median(median_values)),
                     "n_values": len(values),
                     "aggregation": rule.aggregation,
                 }
@@ -148,8 +190,9 @@ def add_thresholds_to_metrics(
     wide = thresholds.pivot(
         index=["generating_model", "npe_configuration"],
         columns="metric",
-        values="threshold",
-    ).rename(columns=lambda value: f"{value}_threshold")
+        values=["lower_threshold", "threshold", "median"],
+    )
+    wide.columns = [f"{metric}_{statistic}" for statistic, metric in wide.columns]
     return frame.merge(
         wide.reset_index(),
         on=["generating_model", "npe_configuration"],
@@ -162,7 +205,8 @@ def calculate_and_save_thresholds(
     input_path: str | Path,
     thresholds_path: str | Path,
     results_path: str | Path,
-    quantile: float = 0.95,
+    quantile: float = DEFAULT_POSTERIOR_MMD_QUANTILE,
+    signed_error_coverage: float = DEFAULT_SIGNED_ERROR_COVERAGE,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Read per-dataset NPE-MCMC metrics and write both threshold outputs."""
     input_path = Path(input_path)
@@ -172,7 +216,11 @@ def calculate_and_save_thresholds(
             "Run pipeline.py metrics first."
         )
     frame = pd.read_csv(input_path, keep_default_na=False)
-    thresholds = calculate_thresholds(frame, quantile=quantile)
+    thresholds = calculate_thresholds(
+        frame,
+        quantile=quantile,
+        signed_error_coverage=signed_error_coverage,
+    )
     results = add_thresholds_to_metrics(frame, thresholds)
 
     thresholds_path = Path(thresholds_path)
@@ -187,7 +235,7 @@ def calculate_and_save_thresholds(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Calculate posterior-MMD, absolute-logML-error, and absolute-PMP-error "
+            "Calculate posterior-MMD and signed logML/PMP reference intervals "
             "thresholds from cached per-dataset NPE-MCMC metrics."
         )
     )
@@ -212,7 +260,18 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         help="Optional per_dataset_results.csv path; overrides --calibration-root.",
     )
-    parser.add_argument("--quantile", type=float, default=0.95)
+    parser.add_argument(
+        "--quantile",
+        type=float,
+        default=DEFAULT_POSTERIOR_MMD_QUANTILE,
+        help="One-sided upper quantile for posterior MMD (default: 0.95).",
+    )
+    parser.add_argument(
+        "--signed-error-coverage",
+        type=float,
+        default=DEFAULT_SIGNED_ERROR_COVERAGE,
+        help="Central coverage for signed logML/PMP errors (default: 0.90).",
+    )
     return parser.parse_args()
 
 
@@ -231,6 +290,7 @@ def main() -> None:
         thresholds_path=thresholds_path,
         results_path=results_path,
         quantile=args.quantile,
+        signed_error_coverage=args.signed_error_coverage,
     )
     print(f"Input NPE-MCMC metrics: {input_path}")
     print(f"Thresholds: {thresholds_path} ({len(thresholds)} rows)")
