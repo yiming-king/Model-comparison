@@ -1,0 +1,26 @@
+{
+  "fileName": "FNR-FPR tables without MMD rerun1.xlsx",
+  "outputPath": "/Users/yimingzang/Documents/Project/benchmark2/outputs/20260827_reordered_diffusion_plots/FNR-FPR tables without MMD rerun1.xlsx",
+  "sheetsRendered": 13,
+  "formulaErrors": 0,
+  "cellsAndFormulasUnchanged": true,
+  "chartPropertiesUnchangedBeyondPlacement": true,
+  "order": [
+    "Posterior MMD — M0",
+    "Posterior MMD — M1",
+    "Posterior MMD — M2",
+    "Posterior MMD — M3",
+    "Signed log10 ML error — M0",
+    "Signed log10 ML error — M1",
+    "Signed log10 ML error — M2",
+    "Signed log10 ML error — M3",
+    "Signed PMP error — M0",
+    "Signed PMP error — M1",
+    "Signed PMP error — M2",
+    "Signed PMP error — M3"
+  ],
+  "plotSheets": {
+    "Plots - Simulated": 24,
+    "Plots - Empirical": 24
+  }
+}

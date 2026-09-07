@@ -12,7 +12,6 @@ import pandas as pd
 from ..config import CALIBRATION_ROOT, ASSUMED_MODELS
 
 
-MIN_IMPORTANCE_ESS_RATIO = 0.20
 DEFAULT_POSTERIOR_MMD_QUANTILE = 0.95
 DEFAULT_SIGNED_ERROR_COVERAGE = 0.90
 
@@ -73,8 +72,6 @@ def _validate_input(frame: pd.DataFrame) -> None:
         *GROUP_COLUMNS,
         "candidate_model",
         "dataset_id",
-        "importance_ess",
-        "num_npe_logml_draws",
         *(rule.value_column for rule in THRESHOLD_RULES),
         *(rule.median_column for rule in THRESHOLD_RULES),
     }
@@ -87,24 +84,13 @@ def _selected_values(
     group: pd.DataFrame,
     rule: ThresholdRule,
     column: str | None = None,
-    *,
-    apply_importance_filter: bool = True,
 ) -> np.ndarray:
-    importance_ess = pd.to_numeric(group["importance_ess"], errors="coerce")
-    num_draws = pd.to_numeric(group["num_npe_logml_draws"], errors="coerce")
-    importance_ok = (
-        importance_ess.notna()
-        & num_draws.gt(0.0)
-        & importance_ess.div(num_draws).ge(MIN_IMPORTANCE_ESS_RATIO)
-    )
     if rule.selection == "matching_model":
         mask = group["candidate_model"].eq(group["generating_model"])
     elif rule.selection == "all_candidate_models":
         mask = pd.Series(True, index=group.index)
     else:
         raise ValueError(f"Unknown threshold selection: {rule.selection}")
-    if apply_importance_filter:
-        mask &= importance_ok
     return (
         pd.to_numeric(group.loc[mask, column or rule.value_column], errors="coerce")
         .dropna()
@@ -135,9 +121,6 @@ def calculate_thresholds(
     for key, group in frame.groupby(list(GROUP_COLUMNS), sort=False, dropna=False):
         metadata = dict(zip(GROUP_COLUMNS, key, strict=True))
         for rule in THRESHOLD_RULES:
-            values_before_ess_filter = _selected_values(
-                group, rule, apply_importance_filter=False
-            )
             values = _selected_values(group, rule)
             medians = _selected_values(group, rule, rule.median_column)
             if not len(values) or not len(medians):
@@ -177,15 +160,8 @@ def calculate_thresholds(
                     ),
                     "median": float(np.median(medians)),
                     "n_values": int(len(values)),
-                    "n_values_before_ess_filter": int(
-                        len(values_before_ess_filter)
-                    ),
-                    "n_dropped_low_importance_ess": int(
-                        len(values_before_ess_filter) - len(values)
-                    ),
                     "aggregation": rule.aggregation,
                     "gold_standard": "analytical",
-                    "min_importance_ess_ratio": MIN_IMPORTANCE_ESS_RATIO,
                 }
             )
     return pd.DataFrame(rows)

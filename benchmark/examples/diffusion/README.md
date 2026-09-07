@@ -56,6 +56,73 @@ the two Python files can be run directly from the project root:
 the interval definitions, so neither run needs manual threshold edits after
 regeneration.
 
+### Extend threshold calibration from 30 to 100 datasets
+
+First create one standard reference root from the original `s000--s029` data
+and the incremental `s030--s099` bundle. The command hard-links the large JSON
+and posterior files and concatenates the manifests and Stan CSV tables:
+
+```bash
+/opt/anaconda3/envs/benchmark2/bin/python \
+  benchmark/examples/diffusion/calibration/prepare_reference_100.py
+```
+
+Then compute the missing 70 per-dataset metrics for each training run. The
+`--reuse-metrics` option imports the compatible first 30 datasets from the old
+cache. It never combines old and incremental threshold values; each final
+threshold is calculated once from the resulting 100-dataset metric sample.
+
+```bash
+# With MMD loss.
+/opt/anaconda3/envs/benchmark2/bin/python \
+  benchmark/examples/diffusion/calibration/pipeline.py metrics \
+  --reference-root benchmark/examples/diffusion/calibration_reference_100 \
+  --output-root benchmark/examples/diffusion/calibration_outputs_100_withMMD \
+  --reuse-metrics benchmark/examples/diffusion/calibration_outputs \
+  --k 100 --training-settings with_mmd \
+  --summary-multipliers 1 2 4 6
+
+# Without MMD loss, run 1 (checkpoint suffix: noMMD).
+/opt/anaconda3/envs/benchmark2/bin/python \
+  benchmark/examples/diffusion/calibration/pipeline.py metrics \
+  --reference-root benchmark/examples/diffusion/calibration_reference_100 \
+  --output-root benchmark/examples/diffusion/calibration_outputs_100_noMMD \
+  --reuse-metrics benchmark/examples/diffusion/calibration_outputs \
+  --k 100 --training-settings without_mmd \
+  --without-mmd-run-suffix noMMD \
+  --summary-multipliers 1 2 4 6
+
+# Without MMD loss, run 2 (checkpoint suffix: noMMD_rerun1).
+/opt/anaconda3/envs/benchmark2/bin/python \
+  benchmark/examples/diffusion/calibration/pipeline.py metrics \
+  --reference-root benchmark/examples/diffusion/calibration_reference_100 \
+  --output-root benchmark/examples/diffusion/calibration_outputs_100_noMMD_rerun1 \
+  --reuse-metrics benchmark/examples/diffusion/calibration_outputs_rerun1 \
+  --k 100 --training-settings without_mmd \
+  --without-mmd-run-suffix noMMD_rerun1 \
+  --summary-multipliers 1 2 4 6
+```
+
+Finally calculate one set of 100-dataset thresholds in each output root:
+
+```bash
+for root in \
+  calibration_outputs_100_withMMD \
+  calibration_outputs_100_noMMD \
+  calibration_outputs_100_noMMD_rerun1
+do
+  /opt/anaconda3/envs/benchmark2/bin/python \
+    benchmark/examples/diffusion/calibration/thresholds.py \
+    --calibration-root "benchmark/examples/diffusion/${root}"
+done
+```
+
+With all Stan fits converged, every posterior-MMD and signed-logML threshold
+row has `n_values=100`; every signed-PMP threshold row has `n_values=400`
+because it pools the four candidate-model PMP components for each dataset.
+Stored logML errors are in natural-log units. Plot/analysis loaders convert
+both errors and interval endpoints to log10 units by dividing by `log(10)`.
+
 Threshold and classification tables retain all four summary dimensions
 (`S=D`, `S=2D`, `S=4D`, and `S=6D`). Summary-diagnostic figures intentionally
 display only `S=D`, `S=2D`, and `S=4D`; `S=6D` is excluded from plotted points,

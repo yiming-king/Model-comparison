@@ -8,7 +8,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.colors import Normalize
+from matplotlib.colors import FuncNorm, Normalize
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from matplotlib.scale import SymmetricalLogTransform
@@ -43,17 +43,22 @@ LEGACY_CALIBRATED_FIGURE_FILENAMES = {
 def _make_summary_specs(
     summary_base_distribution: str | None = "normal",
     run_suffix: str | None = None,
+    embed_dim: int = 64,
+    epochs: int = 100,
+    summary_multipliers: tuple[int, ...] = tuple(SUMMARY_LABELS),
 ) -> SummarySpecs:
     return tuple(
         (
-            label,
+            SUMMARY_LABELS[multiplier],
             TrainingConfig(
                 summary_multiplier=multiplier,
+                embed_dim=embed_dim,
+                epochs=epochs,
                 summary_base_distribution=summary_base_distribution,
                 run_suffix=run_suffix,
             ),
         )
-        for multiplier, label in SUMMARY_LABELS.items()
+        for multiplier in summary_multipliers
     )
 
 
@@ -90,8 +95,26 @@ def _compact_tick_label(value: float, _: int | None = None) -> str:
     return f"{value:.2g}"
 
 
-def _normalize_distance(x, median, high):
-    return (x - median) / (high - median)
+RHO_NORMALIZATIONS = ("centered", "upper_threshold")
+
+
+def _normalize_distance(x, median, high, method: str = "centered"):
+    """Normalize a diagnostic using either the legacy or d / d_high rule."""
+    if method not in RHO_NORMALIZATIONS:
+        raise ValueError(
+            f"rho normalization must be one of {RHO_NORMALIZATIONS}; got {method!r}"
+        )
+    values = np.asarray(x, dtype=float)
+    upper = np.asarray(high, dtype=float)
+    if method == "upper_threshold":
+        if np.any(np.isclose(upper, 0.0)):
+            raise ValueError("Diagnostic upper threshold must be non-zero")
+        return values / upper
+    center = np.asarray(median, dtype=float)
+    scale = upper - center
+    if np.any(np.isclose(scale, 0.0)):
+        raise ValueError("Diagnostic upper threshold must differ from its median")
+    return (values - center) / scale
 
 
 def _scale_nonnegative_metric(x, high):
@@ -675,9 +698,25 @@ def _pmp_view(
     models: tuple[str, ...],
     pmp_source: str,
 ) -> pd.DataFrame:
-    """Select saved four-model PMP or normalize saved M1/M3 logML values."""
+    """Recompute PMP from either all four models or the M1/M3 subset."""
     output = frame.copy()
     if pmp_source == "four_model":
+        estimated = softmax(
+            output[[f"log_ml_{model}" for model in MODELS]].to_numpy(dtype=float),
+            axis=1,
+        )
+        gold = softmax(
+            output[
+                [f"gold_log_ml_{model}" for model in MODELS]
+            ].to_numpy(dtype=float),
+            axis=1,
+        )
+        for index, model in enumerate(MODELS):
+            output[f"pmp_{model}"] = estimated[:, index]
+            output[f"gold_pmp_{model}"] = gold[:, index]
+            output[f"signed_pmp_error_{model}"] = (
+                estimated[:, index] - gold[:, index]
+            )
         return output
     if pmp_source != "m1_m3" or tuple(models) != ("m1", "m3"):
         raise ValueError("m1_m3 PMP must be used with M1/M3")
@@ -714,6 +753,7 @@ def model_set_view(
 def _load_cached_frames(
     metric: str,
     summary_specs: SummarySpecs,
+    rho_normalization: str = "centered",
 ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
     diagnostics: dict[str, pd.DataFrame] = {}
     posteriors: dict[str, pd.DataFrame] = {}
@@ -736,7 +776,16 @@ def _load_cached_frames(
             median = float(references[model][metric]["median"])
             diagnostic[f"dm_median_{model}"] = median
             diagnostic[f"rho_{model}"] = _normalize_distance(
-                diagnostic[f"d_{model}"], median, diagnostic[f"dm_high_{model}"]
+                diagnostic[f"d_{model}"],
+                median,
+                diagnostic[f"dm_high_{model}"],
+                method=rho_normalization,
+            )
+            diagnostic[f"rho_low_{model}"] = _normalize_distance(
+                diagnostic[f"dm_low_{model}"],
+                median,
+                diagnostic[f"dm_high_{model}"],
+                method=rho_normalization,
             )
         diagnostics[label] = diagnostic
         posteriors[label] = load_posterior_diagnostic(paths["posterior"]).assign(
@@ -750,9 +799,14 @@ def load_summary_dimension_data(
     models: tuple[str, ...] = MODELS,
     summary_specs: SummarySpecs = WITH_MMD_SUMMARY_SPECS,
     pmp_source: str | None = None,
+    rho_normalization: str = "centered",
 ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
     """Load existing diagnostic and posterior caches; never refit any model."""
-    diagnostics, posteriors = _load_cached_frames(metric, summary_specs)
+    diagnostics, posteriors = _load_cached_frames(
+        metric,
+        summary_specs,
+        rho_normalization=rho_normalization,
+    )
     source = pmp_source or _infer_pmp_source(models)
     diagnostics = {
         label: model_set_view(frame, models, pmp_source=source)
@@ -777,11 +831,7 @@ def pmp_long(frame: pd.DataFrame, models: tuple[str, ...]) -> pd.DataFrame:
                     "model": model,
                     "model_title": MODEL_TITLES[model],
                     "rho": frame[f"rho_{model}"],
-                    "rho_low": _normalize_distance(
-                        frame[f"dm_low_{model}"],
-                        frame[f"dm_median_{model}"],
-                        frame[f"dm_high_{model}"],
-                    ),
+                    "rho_low": frame[f"rho_low_{model}"],
                     "gold_pmp": frame[f"gold_pmp_{model}"],
                     "signed_pmp_error": frame[f"signed_pmp_error_{model}"],
                     "at_least_one_not_high_surprise": frame[
@@ -805,11 +855,7 @@ def logml_long(frame: pd.DataFrame, models: tuple[str, ...]) -> pd.DataFrame:
                     "id": frame["id"],
                     "model": model,
                     "rho": frame[f"rho_{model}"],
-                    "rho_low": _normalize_distance(
-                        frame[f"dm_low_{model}"],
-                        frame[f"dm_median_{model}"],
-                        frame[f"dm_high_{model}"],
-                    ),
+                    "rho_low": frame[f"rho_low_{model}"],
                     "signed_logml_error": signed_ln,
                     "logml_error": signed_ln / np.log(10.0),
                     "at_least_one_not_high_surprise": frame[
@@ -861,11 +907,7 @@ def prepare_rho_error_data(
                         "summary": summary,
                         "model": model,
                         "rho": diagnostic[f"rho_{model}"],
-                        "rho_low": _normalize_distance(
-                            diagnostic[f"dm_low_{model}"],
-                            diagnostic[f"dm_median_{model}"],
-                            diagnostic[f"dm_high_{model}"],
-                        ),
+                        "rho_low": diagnostic[f"rho_low_{model}"],
                         "logml_error": signed_ln / np.log(10.0),
                         "pmp_error": diagnostic[f"signed_pmp_error_{model}"],
                         "all_high_surprise": globally_high,
@@ -1131,6 +1173,14 @@ def _remove_stale_metric_figures(
     }
     for filename in known_filenames.difference(current_filenames):
         (directory / filename).unlink(missing_ok=True)
+
+
+def _add_filename_suffix(filename: str, suffix: str | None) -> str:
+    """Add an optional run identifier without changing the file extension."""
+    if not suffix:
+        return filename
+    path = Path(filename)
+    return f"{path.stem}_{suffix}{path.suffix}"
 
 
 def plot_rho_error_overlay(
@@ -1427,11 +1477,15 @@ def run_summary_dimension_comparison(
     x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
     y_symlog_linthresh: float = 1.0,
     normalize_metrics: bool = True,
+    rho_normalization: str = "centered",
+    filename_suffix: str | None = None,
 ) -> dict[str, object]:
     """Generate figures using well-specified NPE--MCMC reference thresholds."""
     source = pmp_source or _infer_pmp_source(models)
     diagnostics, posteriors = cached_frames or _load_cached_frames(
-        metric, summary_specs
+        metric,
+        summary_specs,
+        rho_normalization=rho_normalization,
     )
     data = prepare_rho_error_data(
         diagnostics,
@@ -1457,12 +1511,16 @@ def run_summary_dimension_comparison(
     for source_group in ("simulated", "empirical"):
         plot_specs = _calibrated_plot_specs(normalize_metrics)
         for value, spec in plot_specs.items():
+            figure_filename = _add_filename_suffix(
+                spec["filename"],
+                filename_suffix,
+            )
             path = plot_rho_error_overlay(
                 data,
                 models,
                 value,
                 source_group,
-                output_root / source_group / spec["filename"],
+                output_root / source_group / figure_filename,
                 diagnostic=metric,
                 calibrated_thresholds=True,
                 normalize_metrics=normalize_metrics,
@@ -1481,7 +1539,10 @@ def run_summary_dimension_comparison(
             )
         _remove_stale_metric_figures(
             output_root / source_group,
-            {spec["filename"] for spec in plot_specs.values()},
+            {
+                _add_filename_suffix(spec["filename"], filename_suffix)
+                for spec in plot_specs.values()
+            },
         )
     return {
         "manifest": pd.DataFrame(manifest),
@@ -1505,11 +1566,17 @@ def run_comparison_pipeline(
     x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
     y_symlog_linthresh: float = 1.0,
     normalize_metrics: bool = True,
+    rho_normalization: str = "centered",
+    filename_suffix: str | None = None,
 ) -> dict[str, dict[str, object]]:
     """Create figures using well-specified NPE--MCMC reference thresholds."""
     comparisons: dict[str, dict[str, object]] = {}
     for metric in metrics:
-        cached = _load_cached_frames(metric, summary_specs)
+        cached = _load_cached_frames(
+            metric,
+            summary_specs,
+            rho_normalization=rho_normalization,
+        )
         for name, models in model_sets.items():
             pmp_source = "four_model"
             comparisons[f"{name}_{metric}"] = run_summary_dimension_comparison(
@@ -1524,6 +1591,8 @@ def run_comparison_pipeline(
                 x_symlog_linthresh=x_symlog_linthresh,
                 y_symlog_linthresh=y_symlog_linthresh,
                 normalize_metrics=normalize_metrics,
+                rho_normalization=rho_normalization,
+                filename_suffix=filename_suffix,
                 output_root=(
                     Path(output_root) / name / metric
                     if output_root is not None
@@ -1544,6 +1613,8 @@ def run_calibrated_comparison_pipeline(
     x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
     y_symlog_linthresh: float = 1.0,
     normalize_metrics: bool = True,
+    rho_normalization: str = "centered",
+    filename_suffix: str | None = None,
 ) -> dict[str, dict[str, object]]:
     """Run the comparison layout with calibrated metric-specific bounds."""
     return run_comparison_pipeline(
@@ -1557,6 +1628,8 @@ def run_calibrated_comparison_pipeline(
         x_symlog_linthresh=x_symlog_linthresh,
         y_symlog_linthresh=y_symlog_linthresh,
         normalize_metrics=normalize_metrics,
+        rho_normalization=rho_normalization,
+        filename_suffix=filename_suffix,
     )
 
 
@@ -1802,6 +1875,18 @@ GOLD_PMP_POINT_STYLES = {
 }
 GOLD_PMP_LOWESS_LINEWIDTH = 3.0
 GOLD_PMP_HIGH_CONTRAST_CMAP = "turbo"
+GOLD_PMP_ALL_MODEL_COLOR_CUTOFF = 1e-2
+GOLD_PMP_ALL_MODEL_LOW_COLOR_FRACTION = 0.30
+GOLD_PMP_ALL_MODEL_COLORBAR_TICKS = (
+    0.0,
+    1e-40,
+    1e-20,
+    1e-8,
+    1e-2,
+    1e-1,
+    5e-1,
+    1.0,
+)
 EMPIRICAL_GRID_ROW_STRIP_WIDTH = 0.075
 SHOW_GOLD_PMP_MAX_ERROR = True
 SHOW_GOLD_PMP_BOUNDARY_HIT = False
@@ -1813,6 +1898,7 @@ def load_visualization_data(
     models: tuple[str, ...] = VISUALIZATION_MODELS,
     sources: tuple[str, ...] = VISUALIZATION_SOURCES,
     posterior_mmd_column: str = "observed_mmd",
+    rho_normalization: str = "centered",
 ) -> pd.DataFrame:
     """Load participant-level diagnostics for the visualization suite."""
     if diagnostic not in DIAGNOSTICS:
@@ -1821,6 +1907,7 @@ def load_visualization_data(
         metric=diagnostic,
         models=models,
         summary_specs=summary_specs,
+        rho_normalization=rho_normalization,
     )
     frames = []
     for summary in VISUALIZATION_SUMMARY_LABELS:
@@ -2202,7 +2289,7 @@ def _axis_limits_by_group(
     return limits
 
 
-def _gold_pmp_grid_handles() -> list[Line2D]:
+def _gold_pmp_grid_handles(*, include_line_guides: bool = False) -> list[Line2D]:
     handles = [
         Line2D(
             [0],
@@ -2228,26 +2315,139 @@ def _gold_pmp_grid_handles() -> list[Line2D]:
             label="empirical",
         )
     )
+    if include_line_guides:
+        handles.extend(
+            [
+                Line2D(
+                    [0],
+                    [0],
+                    color="black",
+                    linestyle="--",
+                    linewidth=GOLD_PMP_LOWESS_LINEWIDTH,
+                    label="LOESS regression",
+                ),
+                Line2D(
+                    [0],
+                    [0],
+                    color="#7A0276",
+                    linestyle="--",
+                    linewidth=1.1,
+                    label=r"max $|$error$|$ for $\rho\leq1$",
+                ),
+            ]
+        )
     return handles
+
+
+def _gold_pmp_color_norm(
+    models: tuple[str, ...],
+    values: pd.Series,
+) -> Normalize:
+    """Keep four-model PMP colors legible without changing their values."""
+    if tuple(models) == tuple(MODELS):
+        positive = pd.to_numeric(values, errors="coerce")
+        positive = positive.loc[positive.gt(0.0) & np.isfinite(positive)]
+        color_floor = max(
+            float(positive.min()) if not positive.empty else np.finfo(float).tiny,
+            np.finfo(float).tiny,
+        )
+        cutoff = GOLD_PMP_ALL_MODEL_COLOR_CUTOFF
+        low_fraction = GOLD_PMP_ALL_MODEL_LOW_COLOR_FRACTION
+        log_floor = np.log10(color_floor)
+        log_cutoff = np.log10(cutoff)
+
+        def forward(probabilities):
+            probabilities = np.asarray(probabilities, dtype=float)
+            clipped = np.clip(probabilities, 0.0, 1.0)
+            low_values = low_fraction * (
+                (np.log10(np.maximum(clipped, color_floor)) - log_floor)
+                / (log_cutoff - log_floor)
+            )
+            high_values = low_fraction + (1.0 - low_fraction) * (
+                (clipped - cutoff) / (1.0 - cutoff)
+            )
+            return np.where(
+                clipped <= 0.0,
+                0.0,
+                np.where(clipped <= cutoff, low_values, high_values),
+            )
+
+        def inverse(colors):
+            colors = np.asarray(colors, dtype=float)
+            clipped = np.clip(colors, 0.0, 1.0)
+            low_values = 10.0 ** (
+                log_floor
+                + (clipped / low_fraction) * (log_cutoff - log_floor)
+            )
+            high_values = cutoff + (
+                (clipped - low_fraction) / (1.0 - low_fraction)
+            ) * (1.0 - cutoff)
+            return np.where(
+                clipped <= 0.0,
+                0.0,
+                np.where(clipped <= low_fraction, low_values, high_values),
+            )
+
+        return FuncNorm(
+            (forward, inverse),
+            vmin=0.0,
+            vmax=1.0,
+            clip=True,
+        )
+    return Normalize(vmin=0.0, vmax=1.0, clip=True)
+
+
+def _scatter_gold_pmp_points(
+    ax: plt.Axes,
+    panel: pd.DataFrame,
+    value_column: str,
+    color_norm: Normalize,
+    *,
+    size_scale: float = 1.0,
+    linewidth: float = 0.5,
+):
+    """Draw Gold-PMP-colored points using one shared normalization."""
+    last_scatter = None
+    for flag, style in GOLD_PMP_POINT_STYLES.items():
+        points = panel.loc[panel["at_least_one_not_high_surprise"].eq(flag)]
+        if points.empty:
+            continue
+        last_scatter = ax.scatter(
+            points["rho"],
+            points[value_column],
+            c=points["gold_pmp"],
+            cmap=GOLD_PMP_HIGH_CONTRAST_CMAP,
+            norm=color_norm,
+            s=style["size"] * size_scale,
+            marker=style["marker"],
+            alpha=0.65,
+            edgecolors="black",
+            linewidths=linewidth,
+            zorder=3,
+        )
+    return last_scatter
 
 
 def _add_gold_pmp_max_error(
     ax: plt.Axes,
     panel: pd.DataFrame,
     value_column: str = "signed_pmp_error",
-) -> None:
+    *,
+    fontsize: float = 11,
+    linewidth: float = 1.1,
+) -> bool:
     """Mark the largest absolute signed PMP error among rows with rho <= 1."""
     within_typical = panel.loc[panel["rho"].le(1.0)]
     if within_typical.empty:
-        return
+        return False
     extreme = within_typical.loc[within_typical[value_column].abs().idxmax()]
     extreme_y = float(extreme[value_column])
     ax.axhline(
         extreme_y,
         color="#7A0276",
         linestyle="--",
-        linewidth=1.1,
-        zorder=1,
+        linewidth=linewidth,
+        zorder=4,
     )
     ax.text(
         0.02,
@@ -2257,7 +2457,7 @@ def _add_gold_pmp_max_error(
         ha="left",
         va="top",
         color="#7A0276",
-        fontsize=11,
+        fontsize=fontsize,
         clip_on=False,
         bbox={
             "facecolor": "white",
@@ -2266,6 +2466,7 @@ def _add_gold_pmp_max_error(
             "pad": 1.0,
         },
     )
+    return True
 
 
 def plot_gold_pmp_colored_pmp_error_grid(
@@ -2273,6 +2474,7 @@ def plot_gold_pmp_colored_pmp_error_grid(
     diagnostic: str,
     output_stem: str | Path,
     *,
+    models: tuple[str, ...] = VISUALIZATION_MODELS,
     threshold_columns: tuple[str, str] | None = None,
     value_column: str = "signed_pmp_error",
     ylabel: str = r"$\widehat{p}(M_j\mid y)-p(M_j\mid y)$",
@@ -2284,6 +2486,12 @@ def plot_gold_pmp_colored_pmp_error_grid(
     """Plot the empirical PMP-error grid with one pooled LOWESS per panel."""
     if diagnostic not in DIAGNOSTIC_LABELS:
         raise ValueError(f"diagnostic must be one of {tuple(DIAGNOSTIC_LABELS)}")
+    models = tuple(models)
+    if not models or len(models) != len(set(models)):
+        raise ValueError("models must contain one or more unique model names")
+    unknown_models = tuple(model for model in models if model not in MODELS)
+    if unknown_models:
+        raise ValueError(f"Unknown models: {unknown_models}")
     required = {
         "summary",
         "model",
@@ -2300,22 +2508,27 @@ def plot_gold_pmp_colored_pmp_error_grid(
         raise ValueError(f"Gold-PMP grid is missing columns: {missing}")
     plot_data = data.loc[
         data["summary"].isin(VISUALIZATION_SUMMARY_LABELS)
-        & data["model"].isin(VISUALIZATION_MODELS)
+        & data["model"].isin(models)
     ].copy()
     if plot_data.empty:
         raise ValueError("Gold-PMP grid has no data to plot")
 
     fig, axes = plt.subplots(
         len(VISUALIZATION_SUMMARY_LABELS),
-        len(VISUALIZATION_MODELS),
-        figsize=(9, 10),
+        len(models),
+        figsize=(9, 10) if len(models) == 2 else (3.5 * len(models) + 1.5, 10),
         sharex=True,
         sharey=True,
         squeeze=False,
     )
+    all_model_layout = len(models) == len(MODELS)
+    color_norm = _gold_pmp_color_norm(models, plot_data["gold_pmp"])
+    plot_right = 0.86 if all_model_layout else 0.80
+    row_strip_width = 0.04 if all_model_layout else EMPIRICAL_GRID_ROW_STRIP_WIDTH
+    colorbar_left = 0.94 if all_model_layout else 0.90
     fig.subplots_adjust(
         left=0.14,
-        right=0.80,
+        right=plot_right,
         bottom=0.16,
         top=0.88,
         wspace=0.28,
@@ -2345,7 +2558,7 @@ def plot_gold_pmp_colored_pmp_error_grid(
     )
     last_scatter = None
     for row, summary in enumerate(VISUALIZATION_SUMMARY_LABELS):
-        for column, model in enumerate(VISUALIZATION_MODELS):
+        for column, model in enumerate(models):
             ax = axes[row, column]
             panel = plot_data.loc[
                 plot_data["summary"].eq(summary) & plot_data["model"].eq(model)
@@ -2437,24 +2650,14 @@ def plot_gold_pmp_colored_pmp_error_grid(
                                 "pad": 1.0,
                             },
                         )
-                for flag, style in GOLD_PMP_POINT_STYLES.items():
-                    points = panel.loc[panel["at_least_one_not_high_surprise"].eq(flag)]
-                    if points.empty:
-                        continue
-                    last_scatter = ax.scatter(
-                        points["rho"],
-                        points[value_column],
-                        c=points["gold_pmp"],
-                        cmap=GOLD_PMP_HIGH_CONTRAST_CMAP,
-                        vmin=0.0,
-                        vmax=1.0,
-                        s=style["size"],
-                        marker=style["marker"],
-                        alpha=0.65,
-                        edgecolors="black",
-                        linewidths=0.5,
-                        zorder=3,
-                    )
+                panel_scatter = _scatter_gold_pmp_points(
+                    ax,
+                    panel,
+                    value_column,
+                    color_norm,
+                )
+                if panel_scatter is not None:
+                    last_scatter = panel_scatter
                 curve_x, curve_y = _lowess_curve(
                     panel["rho"],
                     panel[value_column],
@@ -2482,7 +2685,7 @@ def plot_gold_pmp_colored_pmp_error_grid(
             )
 
     fig.canvas.draw()
-    for ax, model in zip(axes[0], VISUALIZATION_MODELS, strict=True):
+    for ax, model in zip(axes[0], models, strict=True):
         position = ax.get_position()
         strip = fig.add_axes([position.x0, position.y1 + 0.006, position.width, 0.046])
         strip.set_facecolor("#D9D9D9")
@@ -2506,7 +2709,7 @@ def plot_gold_pmp_colored_pmp_error_grid(
             [
                 position.x1 + 0.006,
                 position.y0,
-                EMPIRICAL_GRID_ROW_STRIP_WIDTH,
+                row_strip_width,
                 position.height,
             ]
         )
@@ -2531,17 +2734,35 @@ def plot_gold_pmp_colored_pmp_error_grid(
         multialignment="center",
     )
     fig.legend(
-        handles=_gold_pmp_grid_handles(),
+        handles=_gold_pmp_grid_handles(include_line_guides=all_model_layout),
         loc="lower center",
         bbox_to_anchor=(0.5, 0.02),
-        ncol=3,
+        ncol=5 if all_model_layout else 3,
         frameon=False,
-        fontsize=14,
+        fontsize=12 if all_model_layout else 14,
     )
     if last_scatter is not None:
-        colorbar_ax = fig.add_axes([0.90, 0.20, 0.016, 0.62])
+        colorbar_ax = fig.add_axes([colorbar_left, 0.20, 0.016, 0.62])
         colorbar = fig.colorbar(last_scatter, cax=colorbar_ax)
-        colorbar.set_label("Gold-standard PMP", fontsize=16)
+        colorbar_label = "Gold-standard PMP"
+        if all_model_layout:
+            colorbar.set_ticks(GOLD_PMP_ALL_MODEL_COLORBAR_TICKS)
+            colorbar.ax.yaxis.set_major_formatter(
+                FuncFormatter(
+                    lambda value, _: (
+                        "0"
+                        if value == 0.0
+                        else f"{value:.0e}"
+                        if value < 0.01
+                        else f"{value:g}"
+                    )
+                )
+            )
+            colorbar_label += (
+                "\n(log color spacing below "
+                f"{GOLD_PMP_ALL_MODEL_COLOR_CUTOFF:g})"
+            )
+        colorbar.set_label(colorbar_label, fontsize=16)
         colorbar.ax.tick_params(labelsize=14)
     paths = _save_visualization_figure(fig, output_stem)
     plt.close(fig)
@@ -2649,11 +2870,22 @@ def generate_gold_pmp_lowess_grid(
 def display_gold_pmp_lowess_grid(
     paths: dict[str, Path],
     width: int | None = 800,
+    models: tuple[str, ...] = VISUALIZATION_MODELS,
 ) -> None:
     """Display the generated empirical Gold-PMP LOWESS grid in a notebook."""
     from IPython.display import Image, Markdown, display
 
-    display(Markdown("## Empirical PMP error vs. diagnostic $\\rho$"))
+    model_label = (
+        " — all four assumed models"
+        if tuple(models) == tuple(MODELS)
+        else ""
+    )
+    display(
+        Markdown(
+            "## Empirical PMP error vs. diagnostic $\\rho$"
+            f"{model_label}"
+        )
+    )
     display(
         Image(filename=str(paths["png"]), width=width)
         if width
@@ -3399,6 +3631,8 @@ def load_calibrated_visualization_data(
     summary_specs: SummarySpecs,
     threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
     sources: tuple[str, ...] = ("empirical",),
+    models: tuple[str, ...] = VISUALIZATION_MODELS,
+    rho_normalization: str = "centered",
 ) -> pd.DataFrame:
     """Load observed metrics and attach matching well-specified thresholds."""
     data = load_visualization_data(
@@ -3407,8 +3641,26 @@ def load_calibrated_visualization_data(
         models=MODELS,
         sources=sources,
         posterior_mmd_column="observed_mmd",
+        rho_normalization=rho_normalization,
     )
-    data = data.loc[data["model"].isin(VISUALIZATION_MODELS)].copy()
+    data = data.loc[data["model"].isin(models)].copy()
+    if tuple(models) == tuple(MODELS):
+        group_columns = ["summary", "dataset", "id"]
+        model_counts = data.groupby(group_columns, observed=True)["model"].nunique()
+        if not model_counts.eq(len(MODELS)).all():
+            raise ValueError("Four-model PMP data is missing one or more assumed models")
+        gold_sums = data.groupby(group_columns, observed=True)["gold_pmp"].sum()
+        estimated_sums = (
+            data.assign(
+                estimated_pmp=data["gold_pmp"] + data["signed_pmp_error"]
+            )
+            .groupby(group_columns, observed=True)["estimated_pmp"]
+            .sum()
+        )
+        if not np.allclose(gold_sums, 1.0, rtol=0.0, atol=1e-10):
+            raise ValueError("Four-model gold PMP values do not sum to one")
+        if not np.allclose(estimated_sums, 1.0, rtol=0.0, atol=1e-10):
+            raise ValueError("Four-model estimated PMP values do not sum to one")
     data["logml_error"] = data["signed_logml_error"] / np.log(10.0)
     data["pmp_error"] = data["signed_pmp_error"]
     data = _attach_calibration_thresholds(
@@ -3427,17 +3679,21 @@ def generate_calibrated_gold_pmp_lowess_grid(
     threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
     summary_specs: SummarySpecs = NO_MMD_SUMMARY_SPECS,
     output_variant: str = "without_mmd",
+    models: tuple[str, ...] = VISUALIZATION_MODELS,
     xscale: str = RHO_XSCALE,
     yscale: AxisScaleSpec = "linear",
     x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
     y_symlog_linthresh: float = PMP_SYMLOG_LINTHRESH,
     normalize_metrics: bool = True,
+    rho_normalization: str = "centered",
 ) -> dict[str, Path]:
     """Generate the original empirical PMP grid with calibrated PMP cutoffs."""
     data = load_calibrated_visualization_data(
         diagnostic,
         summary_specs,
         threshold_path=threshold_path,
+        models=models,
+        rho_normalization=rho_normalization,
     )
     root = (
         Path(output_root)
@@ -3446,10 +3702,15 @@ def generate_calibrated_gold_pmp_lowess_grid(
     )
     value_column = "pmp_error"
     threshold_columns = ("pmp_error_lower_threshold", "pmp_error_upper_threshold")
+    model_suffix = "_all_models" if tuple(models) == tuple(MODELS) else ""
     return plot_gold_pmp_colored_pmp_error_grid(
         data,
         diagnostic,
-        root / output_variant / diagnostic / f"12_{GOLD_PMP_GRID_KEY}",
+        root
+        / output_variant
+        / diagnostic
+        / f"12_{GOLD_PMP_GRID_KEY}{model_suffix}",
+        models=models,
         threshold_columns=threshold_columns,
         value_column=value_column,
         ylabel=r"$\widehat{p}(M_j\mid y)-p(M_j\mid y)$",

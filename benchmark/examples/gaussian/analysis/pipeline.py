@@ -1093,38 +1093,7 @@ def load_cached_metric_frames(
             for model in ASSUMED_MODELS
         )
     )
-    required_calibration_columns = {
-        "posterior": {
-            "posterior_mmd_lower_threshold",
-            "posterior_mmd_threshold",
-            "posterior_mmd_median",
-            "normalized_posterior_mmd",
-            "normalized_posterior_mmd_low",
-            "normalized_posterior_mmd_high",
-        },
-        "logml": {
-            "signed_logml_error_lower_threshold",
-            "signed_logml_error_threshold",
-            "signed_logml_error_median",
-            "normalized_logml_error",
-            "normalized_logml_error_low",
-            "normalized_logml_error_high",
-        },
-        "pmp": {
-            column
-            for model in ASSUMED_MODELS
-            for column in (
-                f"pmp_error_lower_threshold_{model}",
-                f"pmp_error_upper_threshold_{model}",
-                f"pmp_error_degenerate_interval_{model}",
-            )
-        },
-    }
-    needs_calibration_refresh = any(
-        not required.issubset(frames[name].columns)
-        for name, required in required_calibration_columns.items()
-    )
-    if needs_calibration_refresh and can_attach_thresholds:
+    if can_attach_thresholds:
         network_tag = result_dir.name.removeprefix("ood_")
         matches = tuple(
             network_set

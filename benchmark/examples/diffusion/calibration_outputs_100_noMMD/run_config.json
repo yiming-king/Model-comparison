@@ -1,0 +1,71 @@
+{
+  "stage": "metrics",
+  "reference_root": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/calibration_reference_100",
+  "reuse_metrics": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/calibration_outputs/per_dataset_metrics.csv",
+  "k": 100,
+  "base_seed": 2025,
+  "models": [
+    "m0",
+    "m1",
+    "m2",
+    "m3"
+  ],
+  "candidate_models": [
+    "m0",
+    "m1",
+    "m2",
+    "m3"
+  ],
+  "model_priors": {
+    "m0": 0.25,
+    "m1": 0.25,
+    "m2": 0.25,
+    "m3": 0.25
+  },
+  "gold_posterior_draws": 2048,
+  "mmd_draws_per_sample": 1024,
+  "npe_logml_draws": 2048,
+  "threshold_intervals": {
+    "posterior_mmd": [
+      0.0,
+      0.95
+    ],
+    "signed_logml_error": 0.9,
+    "signed_pmp_error": 0.9
+  },
+  "npe_configs": [
+    {
+      "training_setting": "without_mmd",
+      "epochs": 100,
+      "batch_size": 64,
+      "num_batches": 128,
+      "summary_dim": 30,
+      "summary_multiplier": 1,
+      "embed_dim": 64,
+      "summary_base_distribution": null,
+      "run_suffix": "noMMD"
+    },
+    {
+      "training_setting": "without_mmd",
+      "epochs": 100,
+      "batch_size": 64,
+      "num_batches": 128,
+      "summary_dim": 30,
+      "summary_multiplier": 2,
+      "embed_dim": 64,
+      "summary_base_distribution": null,
+      "run_suffix": "noMMD"
+    },
+    {
+      "training_setting": "without_mmd",
+      "epochs": 100,
+      "batch_size": 64,
+      "num_batches": 128,
+      "summary_dim": 30,
+      "summary_multiplier": 4,
+      "embed_dim": 64,
+      "summary_base_distribution": null,
+      "run_suffix": "noMMD"
+    }
+  ]
+}

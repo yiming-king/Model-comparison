@@ -45,8 +45,6 @@ def _calibration_frame() -> pd.DataFrame:
                     "logml_method": "log_mean_exp",
                     "dataset_id": dataset_id,
                     "candidate_model": candidate_model,
-                    "importance_ess": 500.0,
-                    "num_npe_logml_draws": 1000,
                     "posterior_mmd": (0.1, 0.2, 0.5)[dataset_id]
                     if matching
                     else np.nan,
@@ -92,17 +90,15 @@ def test_thresholds_use_matching_posterior_and_logml_but_pool_pmp_components():
     )
 
 
-def test_thresholds_drop_every_low_ess_candidate_value():
+def test_thresholds_use_all_values_without_importance_ess_fields():
     frame = _calibration_frame()
-    low_ess_dataset = frame["dataset_id"].eq(2)
-    frame.loc[low_ess_dataset, "importance_ess"] = 199.9
 
     thresholds = calculate_thresholds(frame).set_index("metric")
 
-    assert thresholds.loc["posterior_mmd", "n_values"] == 2
-    assert thresholds.loc["signed_logml_error", "n_values"] == 2
-    assert thresholds.loc["signed_pmp_error", "n_values"] == 8
-    assert thresholds["min_importance_ess_ratio"].eq(0.20).all()
+    assert thresholds.loc["posterior_mmd", "n_values"] == 3
+    assert thresholds.loc["signed_logml_error", "n_values"] == 3
+    assert thresholds.loc["signed_pmp_error", "n_values"] == 12
+    assert not any("ess" in column.lower() for column in thresholds.columns)
 
 
 def test_zero_width_pmp_interval_is_marked_degenerate():

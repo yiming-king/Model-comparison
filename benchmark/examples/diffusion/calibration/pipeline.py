@@ -320,6 +320,7 @@ def _compute_model_metrics(
     base_seed: int,
     batch_size: int | None,
     model_priors: dict[str, float],
+    dataset_ids: set[str] | None = None,
 ) -> pd.DataFrame:
     from ..results.observed_datasets import load_dataset_directory
     from ..results.posterior_diagnostic import (
@@ -337,8 +338,16 @@ def _compute_model_metrics(
     y, ids = load_dataset_directory(dataset_dir)
     manifest = pd.read_csv(dataset_dir / "true_parameters.csv").set_index("id")
     mcmc = _read_mcmc_tables(paths, generating_model, ids)
+    requested_ids = set(ids) if dataset_ids is None else set(dataset_ids)
+    unknown_ids = sorted(requested_ids.difference(ids))
+    if unknown_ids:
+        raise ValueError(
+            f"Requested datasets are not in the {generating_model} manifest: {unknown_ids}"
+        )
     rows = []
     for index, (dataset_id, observation) in enumerate(zip(ids, y, strict=True)):
+        if dataset_id not in requested_ids:
+            continue
         npe_seed = _npe_seed(base_seed, config, generating_model, index)
         estimates = estimate_model_comparison(
             approximators,
@@ -535,6 +544,86 @@ def _metric_cache_valid(
     )
 
 
+def _compatible_cached_metrics(
+    frame: pd.DataFrame,
+    *,
+    generating_model: str,
+    config: NPEConfig,
+    manifest: pd.DataFrame,
+    model_priors: dict[str, float],
+) -> pd.DataFrame:
+    """Return complete compatible dataset blocks from a partial/global cache."""
+    required = {
+        "generating_model",
+        "dataset_id",
+        "dataset_seed",
+        "candidate_model",
+        "npe_configuration",
+        "training_setting",
+        "summary_dimension",
+        "model_prior",
+        "mcmc_elapsed_seconds",
+        "posterior_mmd",
+        "absolute_logml_error",
+        "absolute_pmp_error",
+    }
+    if frame.empty or not required.issubset(frame.columns):
+        return pd.DataFrame()
+
+    manifest_ids = set(manifest["id"].astype(str))
+    selected = frame.loc[
+        frame["generating_model"].eq(generating_model)
+        & frame["npe_configuration"].eq(config.label)
+        & frame["training_setting"].eq(config.training_setting)
+        & frame["dataset_id"].astype(str).isin(manifest_ids)
+        & frame["candidate_model"].isin(MODELS)
+    ].copy()
+    if selected.empty:
+        return selected
+    key_columns = ["dataset_id", "candidate_model"]
+    if selected.duplicated(key_columns).any():
+        duplicates = selected.loc[selected.duplicated(key_columns, keep=False), key_columns]
+        raise ValueError(
+            "Duplicate rows in reusable metric cache: "
+            f"{duplicates.drop_duplicates().to_dict(orient='records')}"
+        )
+
+    complete_ids = [
+        dataset_id
+        for dataset_id, group in selected.groupby("dataset_id", sort=False)
+        if set(group["candidate_model"]) == set(MODELS) and len(group) == len(MODELS)
+    ]
+    selected = selected.loc[selected["dataset_id"].isin(complete_ids)].copy()
+    if selected.empty:
+        return selected
+
+    seed_lookup = manifest.set_index("id")["dataset_seed"].to_dict()
+    expected_seeds = pd.to_numeric(selected["dataset_id"].map(seed_lookup))
+    actual_seeds = pd.to_numeric(selected["dataset_seed"], errors="coerce")
+    if not np.array_equal(actual_seeds.to_numpy(), expected_seeds.to_numpy()):
+        raise ValueError(
+            f"Reusable metric cache has incompatible dataset seeds for "
+            f"{generating_model}/{config.label}"
+        )
+    expected_priors = selected["candidate_model"].map(model_priors).astype(float)
+    actual_priors = pd.to_numeric(selected["model_prior"], errors="coerce")
+    if not np.isclose(actual_priors, expected_priors).all():
+        raise ValueError(
+            f"Reusable metric cache has incompatible model priors for "
+            f"{generating_model}/{config.label}"
+        )
+    expected_dimensions = selected["candidate_model"].map(
+        {model: config.training.summary_dim_for(model) for model in MODELS}
+    )
+    actual_dimensions = pd.to_numeric(selected["summary_dimension"], errors="coerce")
+    if not np.array_equal(actual_dimensions.to_numpy(), expected_dimensions.to_numpy()):
+        raise ValueError(
+            f"Reusable metric cache has incompatible summary dimensions for "
+            f"{generating_model}/{config.label}"
+        )
+    return selected.sort_values(key_columns).reset_index(drop=True)
+
+
 def compute_metrics(
     paths: CalibrationPaths,
     *,
@@ -544,12 +633,11 @@ def compute_metrics(
     batch_size: int | None,
     model_priors: dict[str, float],
     overwrite: bool,
+    reuse_metrics: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    from ..results.multisource_pipeline import load_approximators
-
     frames = []
     for config in configs:
-        approximators = load_approximators(config.training)
+        approximators = None
         for generating_model in generating_models:
             cache = (
                 paths.metrics
@@ -561,10 +649,55 @@ def compute_metrics(
                 paths.datasets / generating_model / "true_parameters.csv",
                 keep_default_na=False,
             )
-            frame = (
+            local_frame = (
                 pd.read_csv(cache, keep_default_na=False)
                 if cache.exists() and not overwrite
                 else pd.DataFrame()
+            )
+            cached_frames = []
+            if not overwrite:
+                for candidate in (local_frame, reuse_metrics):
+                    if candidate is None:
+                        continue
+                    compatible = _compatible_cached_metrics(
+                        candidate,
+                        generating_model=generating_model,
+                        config=config,
+                        manifest=manifest,
+                        model_priors=model_priors,
+                    )
+                    if len(compatible):
+                        cached_frames.append(compatible)
+            frame = (
+                pd.concat(cached_frames, ignore_index=True)
+                .drop_duplicates(["dataset_id", "candidate_model"], keep="first")
+                if cached_frames
+                else pd.DataFrame()
+            )
+            cached_ids = set(frame["dataset_id"]) if len(frame) else set()
+            missing_ids = set(manifest["id"].astype(str)).difference(cached_ids)
+            print(
+                f"{config.label}/{generating_model}: reuse {len(cached_ids)}, "
+                f"compute {len(missing_ids)} datasets"
+            )
+            if missing_ids:
+                if approximators is None:
+                    from ..results.multisource_pipeline import load_approximators
+
+                    approximators = load_approximators(config.training)
+                computed = _compute_model_metrics(
+                    paths,
+                    generating_model,
+                    config,
+                    approximators,
+                    base_seed=base_seed,
+                    batch_size=batch_size,
+                    model_priors=model_priors,
+                    dataset_ids=missing_ids,
+                )
+                frame = pd.concat([frame, computed], ignore_index=True)
+            frame = frame.sort_values(["dataset_id", "candidate_model"]).reset_index(
+                drop=True
             )
             if not _metric_cache_valid(
                 frame,
@@ -573,17 +706,12 @@ def compute_metrics(
                 manifest=manifest,
                 model_priors=model_priors,
             ):
-                frame = _compute_model_metrics(
-                    paths,
-                    generating_model,
-                    config,
-                    approximators,
-                    base_seed=base_seed,
-                    batch_size=batch_size,
-                    model_priors=model_priors,
+                raise ValueError(
+                    f"Incomplete metric cache after resume for "
+                    f"{generating_model}/{config.label}"
                 )
-                cache.parent.mkdir(parents=True, exist_ok=True)
-                frame.to_csv(cache, index=False)
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            frame.to_csv(cache, index=False)
             frames.append(frame)
     output = pd.concat(frames, ignore_index=True)
     paths.root.mkdir(parents=True, exist_ok=True)
@@ -654,6 +782,14 @@ def main() -> None:
         type=Path,
         help="Read existing datasets and MCMC/bridge output from this calibration root.",
     )
+    parser.add_argument(
+        "--reuse-metrics",
+        type=Path,
+        help=(
+            "Reuse compatible dataset rows from an existing per_dataset_metrics.csv "
+            "(or a directory containing it) and compute only missing datasets."
+        ),
+    )
     parser.add_argument("--k", type=int, default=30)
     parser.add_argument("--base-seed", type=int, default=2025)
     parser.add_argument("--models", nargs="+", default=list(MODELS))
@@ -688,6 +824,18 @@ def main() -> None:
         parser.error("--embed-dim must be at least 1")
     if args.reference_root is not None and args.stage in {"generate", "mcmc", "all"}:
         parser.error("--reference-root is only valid for metrics or thresholds")
+    if args.reuse_metrics is not None and args.stage != "metrics":
+        parser.error("--reuse-metrics is only valid for the metrics stage")
+    reuse_metrics_path = args.reuse_metrics
+    if reuse_metrics_path is not None and reuse_metrics_path.is_dir():
+        reuse_metrics_path = reuse_metrics_path / "per_dataset_metrics.csv"
+    if reuse_metrics_path is not None and not reuse_metrics_path.exists():
+        parser.error(f"Reusable metrics do not exist: {reuse_metrics_path}")
+    reusable_metrics = (
+        pd.read_csv(reuse_metrics_path, keep_default_na=False)
+        if reuse_metrics_path is not None
+        else None
+    )
     paths = CalibrationPaths(
         args.output_root.resolve(),
         args.reference_root.resolve() if args.reference_root is not None else None,
@@ -708,6 +856,11 @@ def main() -> None:
                 "stage": args.stage,
                 "reference_root": (
                     str(paths.reference_root) if paths.reference_root is not None else None
+                ),
+                "reuse_metrics": (
+                    str(reuse_metrics_path.resolve())
+                    if reuse_metrics_path is not None
+                    else None
                 ),
                 "k": args.k,
                 "base_seed": args.base_seed,
@@ -761,6 +914,7 @@ def main() -> None:
             batch_size=args.batch_size,
             model_priors=priors,
             overwrite=args.overwrite,
+            reuse_metrics=reusable_metrics,
         )
     elif args.stage == "thresholds":
         if not paths.per_dataset_metrics.exists():

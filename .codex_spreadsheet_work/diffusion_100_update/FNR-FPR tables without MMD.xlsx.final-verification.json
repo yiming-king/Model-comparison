@@ -1,0 +1,15 @@
+{
+  "fileName": "FNR-FPR tables without MMD.xlsx",
+  "replacementChecks": 288,
+  "gaussianRowsUnchanged": 144,
+  "s6dRowsUnchanged": 96,
+  "summaryValueChecks": 1536,
+  "boldChecks": 1536,
+  "formulaErrors": 0,
+  "chartCounts": {
+    "Plots - Simulated": 24,
+    "Plots - Empirical": 24,
+    "Plots - Gaussian": 24
+  },
+  "methodThreshold": "benchmark/examples/diffusion/calibration_outputs_100_noMMD/thresholds.csv (S=D/2D/4D, n=100); S=6D retains calibration_outputs/thresholds.csv (n=30)."
+}

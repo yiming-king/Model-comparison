@@ -6,11 +6,13 @@ from benchmark.examples.diffusion.config import MODEL_LABELS, TrainingConfig
 from benchmark.examples.diffusion.results.summary_dimension_comparison import (
     METRIC_PLOTS,
     THRESHOLD_LINEWIDTH,
+    _add_filename_suffix,
     _attach_calibration_thresholds,
     _compact_tick_label,
     _legend_layout,
     _metric_ylabel,
     _nonnegative_plot_limits,
+    _normalize_distance,
     _scale_signed_by_lower_bound,
     _select_plot_summaries,
     _threshold_band,
@@ -29,6 +31,23 @@ def test_model_priors_are_used_in_pmp():
 
 def test_model_labels_match_zero_based_model_codes():
     assert MODEL_LABELS == {"m0": "M0", "m1": "M1", "m2": "M2", "m3": "M3"}
+
+
+def test_requested_rho_normalization_uses_d_over_d_high():
+    normalized = _normalize_distance(
+        np.array([-2.0, 2.0, 4.0]),
+        median=1.0,
+        high=4.0,
+        method="upper_threshold",
+    )
+    np.testing.assert_allclose(normalized, [-0.5, 0.5, 1.0])
+
+
+def test_figure_filename_suffix_preserves_extension():
+    assert (
+        _add_filename_suffix("combined_pmp_error_vs_rho.png", "trial")
+        == "combined_pmp_error_vs_rho_trial.png"
+    )
 
 
 def test_logml_normalization_uses_only_lower_bound_scale():
