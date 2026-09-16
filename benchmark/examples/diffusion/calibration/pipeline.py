@@ -19,6 +19,9 @@ if __package__ in (None, ""):
 
 from ..config import BASE_DIR, MODEL_LABELS, MODELS, TrainingConfig
 from .thresholds import (
+    CALIBRATION_VARIANTS,
+    DEFAULT_CALIBRATION_ROOT,
+    DEFAULT_CALIBRATION_VARIANT,
     DEFAULT_POSTERIOR_MMD_QUANTILE,
     DEFAULT_SIGNED_ERROR_COVERAGE,
     add_thresholds_to_metrics,
@@ -26,7 +29,9 @@ from .thresholds import (
 )
 
 
-DEFAULT_OUTPUT_ROOT = BASE_DIR / "calibration_outputs"
+DEFAULT_OUTPUT_ROOT = DEFAULT_CALIBRATION_ROOT
+DEFAULT_REFERENCE_ROOT = BASE_DIR / "calibration_reference_100"
+DEFAULT_DATASETS_PER_MODEL = 100
 GOLD_POSTERIOR_DRAWS = 2048
 MMD_DRAWS = 1024
 NPE_LOGML_DRAWS = 2048
@@ -35,7 +40,7 @@ NPE_LOGML_DRAWS = 2048
 @dataclass(frozen=True)
 class CalibrationPaths:
     root: Path = DEFAULT_OUTPUT_ROOT
-    reference_root: Path | None = None
+    reference_root: Path | None = DEFAULT_REFERENCE_ROOT
 
     @property
     def inputs(self) -> Path:
@@ -55,7 +60,7 @@ class CalibrationPaths:
 
     @property
     def manifest(self) -> Path:
-        return self.root / "dataset_manifest.csv"
+        return self.inputs / "dataset_manifest.csv"
 
     @property
     def per_dataset_metrics(self) -> Path:
@@ -184,7 +189,7 @@ def generate_datasets(
     manifest = pd.concat(frames, ignore_index=True).sort_values(
         ["generating_model", "id"]
     )
-    paths.root.mkdir(parents=True, exist_ok=True)
+    paths.manifest.parent.mkdir(parents=True, exist_ok=True)
     manifest.to_csv(paths.manifest, index=False)
     return manifest
 
@@ -217,7 +222,18 @@ def validate_generated_datasets(
             )
 
 
-def _fit_is_complete(path: Path, expected_ids: set[str]) -> bool:
+def _fit_is_complete(
+    path: Path,
+    expected_ids: set[str],
+    *,
+    require_posterior_draws: bool = True,
+) -> bool:
+    """Check the bridge/diagnostic tables and draws used by calibration.
+
+    Only the matching candidate's posterior draws enter posterior MMD. Detailed
+    per-parameter diagnostics and nonmatching draws are optional archival output;
+    convergence decisions still come from every candidate's diagnostic table.
+    """
     bridge_path = path / "bridgesampling.csv"
     diagnostic_path = path / "convergence_diagnostics.csv"
     if not bridge_path.exists() or not diagnostic_path.exists():
@@ -226,25 +242,36 @@ def _fit_is_complete(path: Path, expected_ids: set[str]) -> bool:
     diagnostics = pd.read_csv(diagnostic_path, keep_default_na=False)
     required_diagnostics = {
         "id",
+        "mcmc_seed",
         "mcmc_elapsed_seconds",
         "bridge_elapsed_seconds",
         "fit_elapsed_seconds",
         "max_rhat",
         "min_n_eff",
+        "min_n_eff_ratio",
+        "num_chains",
+        "num_postwarmup_draws",
         "num_divergent",
         "num_max_treedepth",
         "min_ebfmi",
         "converged",
     }
+    if not {"id", "estimate", "sd"}.issubset(bridge.columns):
+        return False
     if not required_diagnostics.issubset(diagnostics.columns):
         return False
-    bridge_ids = set(bridge["id"])
-    diagnostic_ids = set(diagnostics["id"])
-    draw_ids = {item.stem for item in (path / "posterior_draws").glob("*.csv")}
-    parameter_ids = {
-        item.stem for item in (path / "parameter_diagnostics").glob("*.csv")
-    }
-    return bridge_ids == diagnostic_ids == draw_ids == parameter_ids == expected_ids
+    for table in (bridge, diagnostics):
+        if table["id"].duplicated().any() or set(table["id"]) != expected_ids:
+            return False
+    if require_posterior_draws:
+        draws = {item.stem: item for item in (path / "posterior_draws").glob("*.csv")}
+        if set(draws) != expected_ids:
+            return False
+        for draw_path in draws.values():
+            with draw_path.open() as stream:
+                if sum(1 for _ in stream) - 1 != GOLD_POSTERIOR_DRAWS:
+                    return False
+    return True
 
 
 def run_mcmc(
@@ -266,7 +293,11 @@ def run_mcmc(
             model
             for model in candidate_models
             if overwrite
-            or not _fit_is_complete(paths.mcmc / generating_model / model, expected_ids)
+            or not _fit_is_complete(
+                paths.mcmc / generating_model / model,
+                expected_ids,
+                require_posterior_draws=model == generating_model,
+            )
         ]
         if not pending:
             continue
@@ -771,16 +802,26 @@ def _select_requested_metrics(
     return selected
 
 
-def main() -> None:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "stage", choices=("generate", "mcmc", "metrics", "thresholds", "all")
     )
-    parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument(
+        "--variant",
+        choices=CALIBRATION_VARIANTS,
+        help="Checkpoint/result variant (default: noMMD).",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        help="Override calibration_outputs_100_<variant> for metrics and thresholds.",
+    )
     parser.add_argument(
         "--reference-root",
         type=Path,
-        help="Read existing datasets and MCMC/bridge output from this calibration root.",
+        default=DEFAULT_REFERENCE_ROOT,
+        help="Shared datasets/MCMC root for every stage (default: calibration_reference_100).",
     )
     parser.add_argument(
         "--reuse-metrics",
@@ -790,22 +831,24 @@ def main() -> None:
             "(or a directory containing it) and compute only missing datasets."
         ),
     )
-    parser.add_argument("--k", type=int, default=30)
+    parser.add_argument(
+        "--k", type=int, default=DEFAULT_DATASETS_PER_MODEL,
+        help="Number of independently seeded datasets per generating model (default: 100).",
+    )
     parser.add_argument("--base-seed", type=int, default=2025)
     parser.add_argument("--models", nargs="+", default=list(MODELS))
     parser.add_argument("--candidate-models", nargs="+", default=list(MODELS))
     parser.add_argument(
-        "--summary-multipliers", nargs="+", type=int, default=[1, 2, 4, 6]
+        "--summary-multipliers", nargs="+", type=int, default=[1, 2, 4]
     )
     parser.add_argument(
         "--training-settings",
         nargs="+",
         choices=("with_mmd", "without_mmd"),
-        default=["with_mmd", "without_mmd"],
+        help="Optional training override; mixed settings require --output-root.",
     )
     parser.add_argument(
         "--without-mmd-run-suffix",
-        default="noMMD",
         help="Checkpoint suffix for the without-MMD networks (for example noMMD_rerun1).",
     )
     parser.add_argument(
@@ -818,19 +861,51 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--rscript", default="Rscript")
     parser.add_argument("--overwrite", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.embed_dim < 1:
         parser.error("--embed-dim must be at least 1")
-    if args.reference_root is not None and args.stage in {"generate", "mcmc", "all"}:
-        parser.error("--reference-root is only valid for metrics or thresholds")
+    if args.k < 1:
+        parser.error("--k must be at least 1")
+    if any(multiplier < 1 for multiplier in args.summary_multipliers):
+        parser.error("--summary-multipliers must be positive")
     if args.reuse_metrics is not None and args.stage != "metrics":
         parser.error("--reuse-metrics is only valid for the metrics stage")
+
+    requested_variant = args.variant
+    variant = requested_variant or DEFAULT_CALIBRATION_VARIANT
+    default_setting = "with_mmd" if variant == "withMMD" else "without_mmd"
+    settings = args.training_settings or [default_setting]
+    suffix = args.without_mmd_run_suffix or (
+        variant if variant != "withMMD" else "noMMD"
+    )
+    if settings == ["with_mmd"]:
+        selected_variant = "withMMD"
+        if args.without_mmd_run_suffix is not None:
+            parser.error("--without-mmd-run-suffix requires without_mmd training")
+    elif settings == ["without_mmd"] and suffix in CALIBRATION_VARIANTS[1:]:
+        selected_variant = suffix
+    else:
+        selected_variant = "custom"
+    if requested_variant is not None and selected_variant != requested_variant:
+        parser.error("--variant conflicts with the selected training settings or suffix")
+    if selected_variant == "custom" and args.output_root is None:
+        parser.error("Custom/mixed training settings require an explicit --output-root")
+    args.variant = selected_variant
+    args.training_settings = settings
+    args.without_mmd_run_suffix = suffix
+    if args.output_root is None:
+        args.output_root = BASE_DIR / f"calibration_outputs_100_{selected_variant}"
+    return args
+
+
+def main() -> None:
+    args = _parse_args()
     reuse_metrics_path = args.reuse_metrics
     if reuse_metrics_path is not None and reuse_metrics_path.is_dir():
         reuse_metrics_path = reuse_metrics_path / "per_dataset_metrics.csv"
     if reuse_metrics_path is not None and not reuse_metrics_path.exists():
-        parser.error(f"Reusable metrics do not exist: {reuse_metrics_path}")
+        raise FileNotFoundError(f"Reusable metrics do not exist: {reuse_metrics_path}")
     reusable_metrics = (
         pd.read_csv(reuse_metrics_path, keep_default_na=False)
         if reuse_metrics_path is not None
@@ -849,11 +924,13 @@ def main() -> None:
         args.embed_dim,
     )
     priors = _model_priors(args.model_priors)
-    paths.root.mkdir(parents=True, exist_ok=True)
-    with (paths.root / "run_config.json").open("w") as stream:
+    config_root = paths.inputs if args.stage in {"generate", "mcmc"} else paths.root
+    config_root.mkdir(parents=True, exist_ok=True)
+    with (config_root / "run_config.json").open("w") as stream:
         json.dump(
             {
                 "stage": args.stage,
+                "variant": args.variant,
                 "reference_root": (
                     str(paths.reference_root) if paths.reference_root is not None else None
                 ),
@@ -892,7 +969,7 @@ def main() -> None:
             base_seed=args.base_seed,
             overwrite=args.overwrite,
         )
-    if args.stage in {"mcmc", "metrics", "thresholds", "all"}:
+    if args.stage in {"mcmc", "metrics", "all"}:
         validate_generated_datasets(
             paths, models=models, k=args.k, base_seed=args.base_seed
         )

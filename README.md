@@ -159,55 +159,39 @@ result = compute_or_load_all_observed(
 
 ### Well-specified threshold calibration
 
-Calibration is isolated from the empirical/OOD result pipeline:
-
-```text
-generate well-specified datasets
-        -> fit all candidate models with Stan and bridge sampling
-        -> calculate per-dataset NPE-MCMC MMD, logML, and PMP errors
-        -> filter non-converged fits and calculate 95% thresholds
-```
-
-The complete workflow can be run directly from the repository root:
-
-```bash
-python benchmark/examples/diffusion/calibration/pipeline.py all
-```
-
-Individual stages are also available:
+Calibration uses 100 datasets per generating model (`m0`–`m3`, 400 total).
+Generate or validate all 100 directly, with no 30+70 merging step:
 
 ```bash
 python benchmark/examples/diffusion/calibration/pipeline.py generate
-python benchmark/examples/diffusion/calibration/pipeline.py mcmc
-python benchmark/examples/diffusion/calibration/pipeline.py metrics
-python benchmark/examples/diffusion/calibration/pipeline.py thresholds
 ```
 
-The `metrics` stage writes:
+Shared datasets and Stan references live in
+`benchmark/examples/diffusion/calibration_reference_100/`. The three variants
+`withMMD`, `noMMD` (default), and `noMMD_rerun1` write their own
+`calibration_outputs_100_<variant>/` directories. Existing 100-dataset results
+cover summary dimensions `S=D`, `S=2D`, and `S=4D`.
 
-```text
-benchmark/examples/diffusion/calibration_outputs/per_dataset_metrics.csv
-```
-
-Thresholds can then be rebuilt without rerunning NPE or MCMC:
+Run all calibration stages for one variant:
 
 ```bash
-python benchmark/examples/diffusion/calibration/thresholds.py
+python benchmark/examples/diffusion/calibration/pipeline.py all --variant noMMD
 ```
 
-This writes:
+Stages `generate`, `mcmc`, `metrics`, and `thresholds` can also run separately.
+Existing compatible data and results are reused. A new `--reference-root`
+and `--output-root` allow a separate fresh run; `--k` defaults to 100.
 
-- `calibration_outputs/thresholds.csv`;
-- `calibration_outputs/per_dataset_results.csv`.
+Rebuild thresholds directly from the retained metrics without running NPE/MCMC:
 
-The three default thresholds are the 95th percentiles of:
+```bash
+python benchmark/examples/diffusion/calibration/thresholds.py --variant noMMD
+```
 
-- matching-model NPE-MCMC posterior MMD from converged fits;
-- matching-model absolute NPE-versus-bridge logML error from converged fits;
-- all four absolute PMP-component errors for datasets on which all candidate
-  models converged.
-
-No MCMC-MCMC null threshold is used.
+Posterior MMD uses `[0, q95]`; signed logML and PMP errors use `[q5, q95]`.
+Thresholds filter non-converged reference fits and pool the appropriate values
+across all 100 datasets. See the [diffusion README](benchmark/examples/diffusion/README.md)
+for commands for all three variants and the directory layout.
 
 ## Gaussian case study
 

@@ -15,12 +15,12 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
     __package__ = "benchmark.examples.diffusion.calibration"
 
-from ..config import MODELS, PARAM_DIMS
+from ..config import BASE_DIR, MODELS, PARAM_DIMS
 
 
-DEFAULT_CALIBRATION_ROOT = (
-    Path(__file__).resolve().parent.parent / "calibration_outputs"
-)
+CALIBRATION_VARIANTS = ("withMMD", "noMMD", "noMMD_rerun1")
+DEFAULT_CALIBRATION_VARIANT = "noMMD"
+DEFAULT_CALIBRATION_ROOT = BASE_DIR / "calibration_outputs_100_noMMD"
 DEFAULT_POSTERIOR_MMD_QUANTILE = 0.95
 DEFAULT_SIGNED_ERROR_COVERAGE = 0.90
 
@@ -232,7 +232,7 @@ def calculate_and_save_thresholds(
     return thresholds, results
 
 
-def _parse_args() -> argparse.Namespace:
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Calculate posterior-MMD and signed logML/PMP reference intervals "
@@ -240,10 +240,15 @@ def _parse_args() -> argparse.Namespace:
         )
     )
     parser.add_argument(
+        "--variant",
+        choices=CALIBRATION_VARIANTS,
+        default=DEFAULT_CALIBRATION_VARIANT,
+        help="Select the retained 100-dataset calibration results (default: noMMD).",
+    )
+    parser.add_argument(
         "--calibration-root",
         type=Path,
-        default=DEFAULT_CALIBRATION_ROOT,
-        help="Directory containing per_dataset_metrics.csv and receiving outputs.",
+        help="Override the selected variant's directory for input metrics and outputs.",
     )
     parser.add_argument(
         "--input",
@@ -272,7 +277,10 @@ def _parse_args() -> argparse.Namespace:
         default=DEFAULT_SIGNED_ERROR_COVERAGE,
         help="Central coverage for signed logML/PMP errors (default: 0.90).",
     )
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.calibration_root is None:
+        args.calibration_root = BASE_DIR / f"calibration_outputs_100_{args.variant}"
+    return args
 
 
 def main() -> None:

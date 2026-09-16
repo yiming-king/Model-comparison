@@ -38,5 +38,10 @@ build/
 
 # local tooling / workspace junk
 anaconda_projects/
+/.auc_work/
+/.codex_artifacts/
+/.codex_spreadsheet_work/
+/.codex/auc_inspect.mjs
+/.codex_inspect_*.mjs
 /outputs/
 /threshold_comparison_exports/

@@ -8,6 +8,8 @@ class Calculation:
                  likelihood_std:float,num_samples:int,assumed_model:str,
                  df: float | None = None, use_student_t: bool = False, rng=None,
                  logml_method: str = "log_mean_exp"):
+        if logml_method != "log_mean_exp":
+            raise ValueError("logml_method must be 'log_mean_exp'")
         
         self.approximator = approximator
         self.mu_prior_mean = mu_prior_mean

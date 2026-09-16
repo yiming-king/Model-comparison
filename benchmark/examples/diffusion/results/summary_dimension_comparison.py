@@ -8,7 +8,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.colors import FuncNorm, Normalize
+from matplotlib.colors import FuncNorm, Normalize, to_rgba
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from matplotlib.scale import SymmetricalLogTransform
@@ -45,7 +45,7 @@ def _make_summary_specs(
     run_suffix: str | None = None,
     embed_dim: int = 64,
     epochs: int = 100,
-    summary_multipliers: tuple[int, ...] = tuple(SUMMARY_LABELS),
+    summary_multipliers: tuple[int, ...] = (1, 2, 4),
 ) -> SummarySpecs:
     return tuple(
         (
@@ -229,7 +229,7 @@ TRAINING_METRICS = ("l2", "linf", "mmd", "density")
 TRAINING_METRIC_LABELS = {
     "l2": r"$L_2$",
     "linf": r"$L_\infty$",
-    "mmd": "MMD",
+    "mmd": "Kernel",
     "density": "Density",
 }
 TRAINING_VARIANT_COLORS = {
@@ -267,7 +267,7 @@ METRIC_PLOTS = {
     },
 }
 
-CALIBRATION_THRESHOLD_PATH = BASE_DIR / "calibration_outputs" / "thresholds.csv"
+CALIBRATION_THRESHOLD_PATH = BASE_DIR / "calibration_outputs_100_noMMD" / "thresholds.csv"
 CALIBRATED_METRIC_PLOTS = {
     "posterior_mmd": {
         **METRIC_PLOTS["posterior_mmd"],
@@ -339,13 +339,28 @@ def _calibrated_plot_specs(normalize_metrics: bool) -> dict[str, dict]:
 
 def load_calibration_thresholds(
     summary_specs: SummarySpecs,
-    threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
+    threshold_path: str | Path | None = None,
 ) -> pd.DataFrame:
-    """Load metric-specific calibrated bounds per model and NPE configuration."""
+    """Load 100-dataset bounds from each configuration's matching training run."""
     summary_to_config = {
         summary: config.summary_label for summary, config in summary_specs
     }
-    thresholds = pd.read_csv(threshold_path, keep_default_na=False)
+    if threshold_path is None:
+        paths = set()
+        for _, config in summary_specs:
+            if config.summary_base_distribution is None:
+                variant = config.run_suffix or "noMMD"
+            elif config.run_suffix is None:
+                variant = "withMMD"
+            else:
+                raise ValueError("Pass threshold_path for custom with-MMD training runs")
+            paths.add(BASE_DIR / f"calibration_outputs_100_{variant}" / "thresholds.csv")
+        thresholds = pd.concat(
+            [pd.read_csv(path, keep_default_na=False) for path in sorted(paths)],
+            ignore_index=True,
+        )
+    else:
+        thresholds = pd.read_csv(threshold_path, keep_default_na=False)
     required = {
         "generating_model",
         "npe_configuration",
@@ -451,7 +466,7 @@ def load_calibration_thresholds(
 def _attach_calibration_thresholds(
     data: pd.DataFrame,
     summary_specs: SummarySpecs,
-    threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
+    threshold_path: str | Path | None = None,
 ) -> pd.DataFrame:
     data = data.drop(
         columns=[column for column in data if column.startswith("normalized_pmp")]
@@ -1019,18 +1034,20 @@ def _summary_handles(
     overlay_colors: dict[str, str],
     *,
     show_line: bool = True,
+    marker: str = "o",
+    markersize: float | None = None,
 ) -> list[Line2D]:
     return [
         Line2D(
             [0],
             [0],
-            marker="o",
+            marker=marker,
             color=overlay_colors[label] if show_line else "none",
             markerfacecolor=overlay_colors[label],
             markeredgecolor="black" if not show_line else overlay_colors[label],
             markeredgewidth=0.7,
             linewidth=2.0 if show_line else 0.0,
-            markersize=8 if not show_line else 6,
+            markersize=(8 if not show_line else 6) if markersize is None else markersize,
             label=label,
         )
         for label in overlay_order
@@ -1085,6 +1102,120 @@ def _model_match_handles(data: pd.DataFrame) -> list[Line2D]:
         )
         for is_matched, style in MODEL_MATCH_STYLES.items()
     ]
+
+
+def _scatter_source_median(
+    ax: plt.Axes,
+    points: pd.DataFrame,
+    x_column: str,
+    y_column: str,
+    color: str,
+    *,
+    marker: str,
+    empirical: bool,
+) -> None:
+    median_x = pd.to_numeric(points[x_column], errors="coerce").median()
+    median_y = pd.to_numeric(points[y_column], errors="coerce").median()
+    if np.isfinite(median_x) and np.isfinite(median_y):
+        ax.scatter(
+            [median_x], [median_y],
+            s=150 if empirical else 55,
+            marker=marker,
+            color=color,
+            alpha=1.0,
+            edgecolors="black",
+            linewidths=1.0 if empirical else 0.8,
+            zorder=5 if empirical else 4,
+        )
+
+
+def _scatter_combined_sources(
+    ax: plt.Axes,
+    points: pd.DataFrame,
+    x_column: str,
+    y_column: str,
+    color: str,
+    *,
+    alpha: float,
+) -> None:
+    """Plot source-specific observations and one median per simulated source."""
+    empirical = points["dataset"].eq("empirical")
+    simulated_points = points.loc[~empirical]
+    if not simulated_points.empty:
+        matched = simulated_points["model_matched"].fillna(False).astype(bool)
+        for is_matched, group in simulated_points.groupby(matched, sort=False):
+            ax.scatter(
+                group[x_column], group[y_column],
+                s=36 if is_matched else 20,
+                marker="^" if is_matched else "o",
+                facecolors=to_rgba(color, alpha=0.28 if is_matched else alpha),
+                edgecolors="none", linewidths=0.0, zorder=2,
+            )
+        for _, group in simulated_points.groupby(
+            simulated_points["dataset"].astype("string"), observed=True, sort=True
+        ):
+            is_matched = group["model_matched"].fillna(False).astype(bool).all()
+            _scatter_source_median(
+                ax, group, x_column, y_column, color,
+                marker="^" if is_matched else "o", empirical=False,
+            )
+    empirical_points = points.loc[empirical]
+    if not empirical_points.empty:
+        ax.scatter(
+            empirical_points[x_column], empirical_points[y_column],
+            s=60, marker="*",
+            facecolors=to_rgba(color, alpha=0.45),
+            edgecolors=to_rgba("black", alpha=0.42),
+            linewidths=0.6, zorder=2.5,
+        )
+        _scatter_source_median(
+            ax, empirical_points, x_column, y_column, color,
+            marker="*", empirical=True,
+        )
+
+
+def _combined_source_handles(
+    points: pd.DataFrame,
+    *,
+    empirical_only: bool,
+    empirical_legend_alpha: float,
+) -> list[Line2D]:
+    handles = []
+    if not empirical_only:
+        for marker, alpha, median, size, label in (
+            ("o", 0.5, False, 6, "other simulated datasets"),
+            ("^", 0.28, False, 7, "well-specified datasets"),
+            ("o", 1.0, True, 7, "other simulated median"),
+            ("^", 1.0, True, 7, "well-specified median"),
+        ):
+            handles.append(
+                Line2D(
+                    [0], [0], marker=marker, color="none",
+                    markerfacecolor="0.4" if median else to_rgba("0.4", alpha=alpha),
+                    markeredgecolor="black" if median else "none",
+                    markeredgewidth=0.8 if median else 1.0,
+                    markersize=size, label=label,
+                )
+            )
+    if points["dataset"].eq("empirical").any():
+        handles.extend(
+            [
+                Line2D(
+                    [0], [0], marker="*", color="none",
+                    markerfacecolor=to_rgba(
+                        "0.65", alpha=empirical_legend_alpha if empirical_only else 0.45
+                    ),
+                    markeredgecolor=to_rgba("black", alpha=0.42),
+                    markeredgewidth=0.6, markersize=9, label="empirical datasets",
+                ),
+                Line2D(
+                    [0], [0], marker="*", color="none", markerfacecolor="0.4",
+                    markeredgecolor="black", markeredgewidth=0.8,
+                    markersize=12, label="empirical median",
+                ),
+            ]
+        )
+    return handles
 
 
 def _add_pmp_extremum(
@@ -1202,8 +1333,15 @@ def plot_rho_error_overlay(
     yscale: str = "linear",
     x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
     y_symlog_linthresh: float = 1.0,
+    plot_style: str = "standard",
+    show_empirical_only_loess: bool = True,
+    include_empirical_in_loess: bool = True,
+    loess_frac_by_fit_source: Mapping[str, float] | None = None,
+    empirical_legend_alpha: float = 0.65,
 ) -> Path:
-    """Plot colored overlays, optionally with LOWESS curves."""
+    """Plot standard or combined-source overlays through the shared drawing core."""
+    if plot_style not in {"standard", "combined"}:
+        raise ValueError(f"Unknown plot style: {plot_style}")
     if diagnostic not in DIAGNOSTIC_XLABELS:
         raise ValueError(f"Unknown diagnostic: {diagnostic}")
     if value not in METRIC_PLOTS:
@@ -1234,13 +1372,30 @@ def plot_rho_error_overlay(
             for column in threshold_columns
             for value in pd.to_numeric(data[column], errors="coerce").dropna().unique()
         )
+    combined = plot_style == "combined"
+    empirical_only = combined and source_group == "empirical"
+    active_show_loess = show_empirical_only_loess if empirical_only else show_loess
     frac = LOWESS_FRAC[source_group] if loess_frac is None else loess_frac
+    if combined and not empirical_only:
+        fit_source = (
+            "simulated_and_empirical" if include_empirical_in_loess else "simulated_only"
+        )
+        fractions = {"simulated_and_empirical": 1.0, "simulated_only": 1.0}
+        if loess_frac_by_fit_source is not None:
+            fractions.update(loess_frac_by_fit_source)
+        frac = fractions[fit_source]
+        path = Path(path).parent.parent / "simulated_and_empirical" / Path(path).name
+    if not 0.0 < frac <= 1.0:
+        raise ValueError("LOWESS fraction must be greater than zero and at most one")
     source_data = _select_plot_summaries(data, overlay_order, overlay_column)
-    reference_data = source_data.loc[
-        source_data["dataset"].ne("empirical")
-        if source_group == "simulated"
-        else source_data["dataset"].eq("empirical")
-    ].copy()
+    if combined and not empirical_only:
+        reference_data = source_data
+    else:
+        reference_data = source_data.loc[
+            source_data["dataset"].ne("empirical")
+            if source_group == "simulated"
+            else source_data["dataset"].eq("empirical")
+        ].copy()
     plot_data = (
         _central_interval(
             reference_data,
@@ -1251,6 +1406,18 @@ def plot_rho_error_overlay(
         if value == "logml"
         else reference_data
     )
+    simulated_only_fit = combined and not empirical_only and not include_empirical_in_loess
+    fit_data = plot_data
+    if simulated_only_fit:
+        # Fit-only trimming uses the original simulated population, independently
+        # of the combined trimming used for visible observations and medians.
+        fit_data = reference_data.loc[
+            reference_data["dataset"].ne("empirical")
+        ].dropna(subset=["rho", y_column])
+        if value == "logml":
+            fit_data = _central_interval(
+                fit_data, y_column, ["model", overlay_column], LOGML_CENTRAL_INTERVAL
+            )
 
     fig, axes = plt.subplots(
         1,
@@ -1343,7 +1510,8 @@ def plot_rho_error_overlay(
                 subset=["rho", y_column]
             )
             color = overlay_colors[label]
-            _scatter_model_matches(
+            scatter = _scatter_combined_sources if combined else _scatter_model_matches
+            scatter(
                 ax,
                 overlay,
                 "rho",
@@ -1352,14 +1520,19 @@ def plot_rho_error_overlay(
                 alpha=0.50,
             )
 
-            if show_loess:
+            if active_show_loess:
+                fit_overlay = overlay
+                if simulated_only_fit and not overlay.empty:
+                    fit_overlay = fit_data.loc[
+                        fit_data["model"].eq(model) & fit_data[overlay_column].eq(label)
+                    ]
                 if value == "logml":
                     curve_x, curve_y = _symlog_lowess_curve(
-                        overlay["rho"], overlay[y_column], frac=frac
+                        fit_overlay["rho"], fit_overlay[y_column], frac=frac
                     )
                 else:
                     curve_x, curve_y = _lowess_curve(
-                        overlay["rho"], overlay[y_column], frac=frac
+                        fit_overlay["rho"], fit_overlay[y_column], frac=frac
                     )
                 ax.plot(curve_x, curve_y, color=color, linewidth=2.0, zorder=3)
             if spec["extrema"]:
@@ -1409,18 +1582,25 @@ def plot_rho_error_overlay(
         va="center",
         multialignment="center",
     )
-    fig.suptitle(
-        "Simulated datasets" if source_group == "simulated" else "Empirical dataset",
-        y=0.99,
-        fontsize=12,
-    )
+    source_title = "Simulated datasets" if source_group == "simulated" else "Empirical dataset"
+    if combined:
+        source_title = "Empirical datasets" if empirical_only else "Simulated and empirical datasets"
+    fig.suptitle(source_title, y=0.99, fontsize=12)
     summary_handles = _summary_handles(
         overlay_order,
         overlay_colors,
-        show_line=show_loess,
+        show_line=active_show_loess and not empirical_only,
+        marker="*" if empirical_only else "o",
+        markersize=9 if empirical_only else None,
     )
     handles = list(summary_handles)
-    handles.extend(_model_match_handles(plot_data))
+    handles.extend(
+        _combined_source_handles(
+            plot_data, empirical_only=empirical_only,
+            empirical_legend_alpha=empirical_legend_alpha,
+        )
+        if combined else _model_match_handles(plot_data)
+    )
     handles.append(
         Patch(
             facecolor=TYPICAL_SET_FILL,
@@ -1429,11 +1609,15 @@ def plot_rho_error_overlay(
             label="typical set",
         )
     )
-    handles, legend_columns, legend_rows = _legend_layout(
-        handles,
-        summary_count=len(summary_handles),
-        model_count=len(models),
-    )
+    if combined and not empirical_only and len(models) in {2, 4}:
+        legend_columns = len(handles) if len(models) == 4 else 5
+        legend_rows = 1 if len(models) == 4 else 2
+    else:
+        handles, legend_columns, legend_rows = _legend_layout(
+            handles,
+            summary_count=len(summary_handles),
+            model_count=len(models),
+        )
     fig.legend(
         handles=handles,
         loc="lower center",
@@ -1471,7 +1655,7 @@ def run_summary_dimension_comparison(
     pmp_source: str | None = None,
     cached_frames: tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]
     | None = None,
-    calibration_threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
+    calibration_threshold_path: str | Path | None = None,
     xscale: str | None = None,
     yscale: AxisScaleSpec = "linear",
     x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
@@ -1479,8 +1663,16 @@ def run_summary_dimension_comparison(
     normalize_metrics: bool = True,
     rho_normalization: str = "centered",
     filename_suffix: str | None = None,
+    plot_style: str = "standard",
+    show_loess: bool = True,
+    show_empirical_only_loess: bool = True,
+    include_empirical_in_loess: bool = True,
+    loess_frac_by_fit_source: Mapping[str, float] | None = None,
+    empirical_legend_alpha: float = 0.65,
 ) -> dict[str, object]:
     """Generate figures using well-specified NPE--MCMC reference thresholds."""
+    if plot_style not in {"standard", "combined"}:
+        raise ValueError(f"Unknown plot style: {plot_style}")
     source = pmp_source or _infer_pmp_source(models)
     diagnostics, posteriors = cached_frames or _load_cached_frames(
         metric,
@@ -1528,17 +1720,29 @@ def run_summary_dimension_comparison(
                 yscale=_resolve_metric_scale(yscale, value),
                 x_symlog_linthresh=x_symlog_linthresh,
                 y_symlog_linthresh=y_symlog_linthresh,
+                plot_style=plot_style,
+                show_loess=show_loess,
+                show_empirical_only_loess=show_empirical_only_loess,
+                include_empirical_in_loess=include_empirical_in_loess,
+                loess_frac_by_fit_source=loess_frac_by_fit_source,
+                empirical_legend_alpha=empirical_legend_alpha,
+            )
+            manifest_source = (
+                {"simulated": "simulated and empirical", "empirical": "empirical only"}[
+                    source_group
+                ]
+                if plot_style == "combined" else source_group
             )
             manifest.append(
                 {
-                    "source_group": source_group,
+                    "source_group": manifest_source,
                     "metric": value,
                     "kind": "figure",
                     "path": str(path),
                 }
             )
         _remove_stale_metric_figures(
-            output_root / source_group,
+            path.parent,
             {
                 _add_filename_suffix(spec["filename"], filename_suffix)
                 for spec in plot_specs.values()
@@ -1560,7 +1764,7 @@ def run_comparison_pipeline(
     model_sets: dict[str, tuple[str, ...]] = MODEL_SETS,
     summary_specs: SummarySpecs = WITH_MMD_SUMMARY_SPECS,
     output_root: str | Path | None = None,
-    calibration_threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
+    calibration_threshold_path: str | Path | None = None,
     xscale: str | None = None,
     yscale: AxisScaleSpec = "linear",
     x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
@@ -1568,6 +1772,12 @@ def run_comparison_pipeline(
     normalize_metrics: bool = True,
     rho_normalization: str = "centered",
     filename_suffix: str | None = None,
+    plot_style: str = "standard",
+    show_loess: bool = True,
+    show_empirical_only_loess: bool = True,
+    include_empirical_in_loess: bool = True,
+    loess_frac_by_fit_source: Mapping[str, float] | None = None,
+    empirical_legend_alpha: float = 0.65,
 ) -> dict[str, dict[str, object]]:
     """Create figures using well-specified NPE--MCMC reference thresholds."""
     comparisons: dict[str, dict[str, object]] = {}
@@ -1593,6 +1803,12 @@ def run_comparison_pipeline(
                 normalize_metrics=normalize_metrics,
                 rho_normalization=rho_normalization,
                 filename_suffix=filename_suffix,
+                plot_style=plot_style,
+                show_loess=show_loess,
+                show_empirical_only_loess=show_empirical_only_loess,
+                include_empirical_in_loess=include_empirical_in_loess,
+                loess_frac_by_fit_source=loess_frac_by_fit_source,
+                empirical_legend_alpha=empirical_legend_alpha,
                 output_root=(
                     Path(output_root) / name / metric
                     if output_root is not None
@@ -1607,7 +1823,7 @@ def run_calibrated_comparison_pipeline(
     model_sets: dict[str, tuple[str, ...]] = MODEL_SETS,
     summary_specs: SummarySpecs = NO_MMD_SUMMARY_SPECS,
     output_root: str | Path | None = None,
-    threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
+    threshold_path: str | Path | None = None,
     xscale: str | None = None,
     yscale: AxisScaleSpec = "linear",
     x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
@@ -1615,6 +1831,12 @@ def run_calibrated_comparison_pipeline(
     normalize_metrics: bool = True,
     rho_normalization: str = "centered",
     filename_suffix: str | None = None,
+    plot_style: str = "standard",
+    show_loess: bool = True,
+    show_empirical_only_loess: bool = True,
+    include_empirical_in_loess: bool = True,
+    loess_frac_by_fit_source: Mapping[str, float] | None = None,
+    empirical_legend_alpha: float = 0.65,
 ) -> dict[str, dict[str, object]]:
     """Run the comparison layout with calibrated metric-specific bounds."""
     return run_comparison_pipeline(
@@ -1630,6 +1852,12 @@ def run_calibrated_comparison_pipeline(
         normalize_metrics=normalize_metrics,
         rho_normalization=rho_normalization,
         filename_suffix=filename_suffix,
+        plot_style=plot_style,
+        show_loess=show_loess,
+        show_empirical_only_loess=show_empirical_only_loess,
+        include_empirical_in_loess=include_empirical_in_loess,
+        loess_frac_by_fit_source=loess_frac_by_fit_source,
+        empirical_legend_alpha=empirical_legend_alpha,
     )
 
 
@@ -1784,13 +2012,13 @@ DIAGNOSTIC_LABELS = {
     "density": "Density",
     "l2": r"$L_2$",
     "linf": r"$L_\infty$",
-    "mmd": "MMD",
+    "mmd": "Kernel",
 }
 DIAGNOSTIC_XLABELS = {
     "density": "Diagnostic: density-based",
     "l2": r"Diagnostic: $L_2$-based",
     "linf": r"Diagnostic: $L_\infty$-based",
-    "mmd": "Diagnostic: MMD-based",
+    "mmd": "Diagnostic: Kernel-based",
 }
 VISUALIZATION_VALUE_SPECS = {
     "observed_mmd": {
@@ -2198,95 +2426,6 @@ def _symlog_padded_limits(
         lower - padding * max(abs(lower), linthresh),
         upper + padding * max(abs(upper), linthresh),
     )
-
-
-def _aligned_symlog_limits_by_group(
-    data: pd.DataFrame,
-    group_column: str,
-    group_order: tuple[str, ...],
-    value_columns: tuple[str, ...] = ("rho", "rho_low"),
-    anchor: float = 1.0,
-    linthresh: float = RHO_SYMLOG_LINTHRESH,
-) -> dict[str, tuple[float, float]]:
-    """Give each group its own limits while aligning one symlog anchor."""
-    transform = SymmetricalLogTransform(
-        base=RHO_SYMLOG_BASE,
-        linthresh=linthresh,
-        linscale=RHO_SYMLOG_LINSCALE,
-    )
-    all_values = pd.concat(
-        [*(data[column] for column in value_columns), pd.Series([anchor])],
-        ignore_index=True,
-    )
-    global_limits = _symlog_padded_limits(all_values, linthresh=linthresh)
-    global_transformed = transform.transform(np.asarray(global_limits))
-    transformed_anchor = float(transform.transform(np.asarray([anchor]))[0])
-    anchor_fraction = (transformed_anchor - float(global_transformed[0])) / (
-        float(global_transformed[1]) - float(global_transformed[0])
-    )
-    anchor_fraction = float(np.clip(anchor_fraction, 0.15, 0.85))
-
-    limits = {}
-    for group in group_order:
-        group_data = data.loc[data[group_column].eq(group)]
-        group_values = pd.concat(
-            [
-                *(group_data[column] for column in value_columns),
-                pd.Series([anchor]),
-            ],
-            ignore_index=True,
-        )
-        padded_limits = _symlog_padded_limits(group_values, linthresh=linthresh)
-        transformed_limits = transform.transform(np.asarray(padded_limits))
-        left_span = transformed_anchor - float(transformed_limits[0])
-        right_span = float(transformed_limits[1]) - transformed_anchor
-        total_span = max(
-            left_span / anchor_fraction,
-            right_span / (1.0 - anchor_fraction),
-            np.finfo(float).eps,
-        )
-        aligned_transformed = np.asarray(
-            [
-                transformed_anchor - anchor_fraction * total_span,
-                transformed_anchor + (1.0 - anchor_fraction) * total_span,
-            ]
-        )
-        aligned_limits = transform.inverted().transform(aligned_transformed)
-        limits[group] = (float(aligned_limits[0]), float(aligned_limits[1]))
-    return limits
-
-
-def _axis_limits_by_group(
-    data: pd.DataFrame,
-    group_column: str,
-    group_order: tuple[str, ...],
-    *,
-    scale: str,
-    linthresh: float,
-    value_columns: tuple[str, ...] = ("rho", "rho_low"),
-    anchor: float = 1.0,
-) -> dict[str, tuple[float, float]]:
-    """Calculate per-panel limits that match the selected x-axis scale."""
-    if scale not in AXIS_SCALES:
-        raise ValueError(f"xscale must be one of {AXIS_SCALES}; got {scale!r}")
-    if scale == "symlog":
-        return _aligned_symlog_limits_by_group(
-            data,
-            group_column,
-            group_order,
-            value_columns=value_columns,
-            anchor=anchor,
-            linthresh=linthresh,
-        )
-    limits = {}
-    for group in group_order:
-        group_data = data.loc[data[group_column].eq(group)]
-        values = pd.concat(
-            [*(group_data[column] for column in value_columns)],
-            ignore_index=True,
-        )
-        limits[group] = _visualization_limits(values, include=(anchor,))
-    return limits
 
 
 def _gold_pmp_grid_handles(*, include_line_guides: bool = False) -> list[Line2D]:
@@ -2819,7 +2958,7 @@ def generate_gold_pmp_lowess_grid(
     output_root: str | Path | None = None,
     *,
     summary_specs: SummarySpecs | None = None,
-    threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
+    threshold_path: str | Path | None = None,
     xscale: str = RHO_XSCALE,
     yscale: AxisScaleSpec = "linear",
     x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
@@ -2893,743 +3032,10 @@ def display_gold_pmp_lowess_grid(
     )
 
 
-S4D_DIAGNOSTIC_ORDER = ("l2", "linf", "density", "mmd")
-S4D_SUMMARY_LABEL = "S=4D"
-
-
-def load_s4d_empirical_diagnostic_data(
-    loss_variant: str = "without_mmd",
-    diagnostics: tuple[str, ...] = S4D_DIAGNOSTIC_ORDER,
-) -> pd.DataFrame:
-    """Load empirical S=4D rows for several diagnostics into one table."""
-    if loss_variant not in LOSS_VARIANTS:
-        raise ValueError(f"loss_variant must be one of {tuple(LOSS_VARIANTS)}")
-    unknown = tuple(
-        diagnostic for diagnostic in diagnostics if diagnostic not in DIAGNOSTICS
-    )
-    if unknown:
-        raise ValueError(f"Unknown diagnostics: {unknown}")
-    _, summary_specs = LOSS_VARIANTS[loss_variant]
-    frames = []
-    for diagnostic in diagnostics:
-        frame = load_visualization_data(
-            diagnostic,
-            summary_specs,
-            sources=("empirical",),
-        )
-        frames.append(
-            frame.loc[frame["summary"].eq(S4D_SUMMARY_LABEL)]
-            .copy()
-            .assign(diagnostic=diagnostic)
-        )
-    data = pd.concat(frames, ignore_index=True)
-    data["diagnostic"] = pd.Categorical(
-        data["diagnostic"],
-        categories=diagnostics,
-        ordered=True,
-    )
-    return data.sort_values(["diagnostic", "model", "dataset", "id"]).reset_index(
-        drop=True
-    )
-
-
-def plot_s4d_diagnostic_gold_pmp_grid(
-    data: pd.DataFrame,
-    output_stem: str | Path,
-    diagnostics: tuple[str, ...] = S4D_DIAGNOSTIC_ORDER,
-    gold_pmp_cmap: str = GOLD_PMP_HIGH_CONTRAST_CMAP,
-    show_max_error: bool = False,
-    xscale: str = RHO_XSCALE,
-    yscale: str = "linear",
-    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
-    y_symlog_linthresh: float = PMP_SYMLOG_LINTHRESH,
-) -> dict[str, Path]:
-    """Plot a 4x2 empirical grid: S=4D only, with one row per diagnostic."""
-    required = {
-        "diagnostic",
-        "summary",
-        "model",
-        "rho",
-        "rho_low",
-        "gold_pmp",
-        "signed_pmp_error",
-        "at_least_one_not_high_surprise",
-    }
-    missing = sorted(required.difference(data.columns))
-    if missing:
-        raise ValueError(f"S=4D diagnostic grid is missing columns: {missing}")
-    plot_data = data.loc[
-        data["summary"].eq(S4D_SUMMARY_LABEL)
-        & data["diagnostic"].isin(diagnostics)
-        & data["model"].isin(VISUALIZATION_MODELS)
-    ].copy()
-    if plot_data.empty:
-        raise ValueError("S=4D diagnostic grid has no data to plot")
-
-    fig, axes = plt.subplots(
-        len(diagnostics),
-        len(VISUALIZATION_MODELS),
-        figsize=(9, 13),
-        sharex=False,
-        sharey=True,
-        squeeze=False,
-    )
-    fig.subplots_adjust(
-        left=0.14,
-        right=0.80,
-        bottom=0.16,
-        top=0.88,
-        wspace=0.28,
-        hspace=0.48,
-    )
-    panel_order = tuple(
-        f"{diagnostic}|{model}"
-        for diagnostic in diagnostics
-        for model in VISUALIZATION_MODELS
-    )
-    limit_data = plot_data.assign(
-        _rho_panel=(
-            plot_data["diagnostic"].astype("string")
-            + "|"
-            + plot_data["model"].astype("string")
-        )
-    )
-    x_limits_by_panel = _axis_limits_by_group(
-        limit_data,
-        "_rho_panel",
-        panel_order,
-        scale=xscale,
-        linthresh=x_symlog_linthresh,
-    )
-    y_limits = _visualization_limits(
-        plot_data["signed_pmp_error"],
-        include=(0.0,),
-    )
-    norm = Normalize(vmin=0.0, vmax=1.0)
-    cmap = plt.get_cmap(gold_pmp_cmap)
-
-    for row, diagnostic in enumerate(diagnostics):
-        for column, model in enumerate(VISUALIZATION_MODELS):
-            ax = axes[row, column]
-            panel = plot_data.loc[
-                plot_data["diagnostic"].eq(diagnostic) & plot_data["model"].eq(model)
-            ].dropna(subset=["rho", "rho_low", "gold_pmp", "signed_pmp_error"])
-            _set_axis_scale(
-                ax,
-                "x",
-                xscale,
-                linthresh=x_symlog_linthresh,
-            )
-            _set_axis_scale(
-                ax,
-                "y",
-                yscale,
-                linthresh=y_symlog_linthresh,
-            )
-            ax.set_xlim(x_limits_by_panel[f"{diagnostic}|{model}"])
-            ax.set_ylim(y_limits)
-            ax.axhline(0.0, color="0.35", linewidth=0.8, zorder=1)
-            if not panel.empty:
-                _shade_typical_set(
-                    ax,
-                    float(panel["rho_low"].median()),
-                    None,
-                    alpha=0.55,
-                )
-                if show_max_error:
-                    _add_gold_pmp_max_error(ax, panel)
-                for flag, style in GOLD_PMP_POINT_STYLES.items():
-                    points = panel.loc[panel["at_least_one_not_high_surprise"].eq(flag)]
-                    if points.empty:
-                        continue
-                    ax.scatter(
-                        points["rho"],
-                        points["signed_pmp_error"],
-                        c=points["gold_pmp"],
-                        cmap=cmap,
-                        norm=norm,
-                        s=style["size"],
-                        marker=style["marker"],
-                        alpha=0.78,
-                        edgecolors="black",
-                        linewidths=0.5,
-                        zorder=3,
-                    )
-                curve_x, curve_y = _lowess_curve(
-                    panel["rho"],
-                    panel["signed_pmp_error"],
-                    frac=VISUALIZATION_LOWESS_FRAC,
-                )
-                ax.plot(
-                    curve_x,
-                    curve_y,
-                    color="black",
-                    linestyle="--",
-                    linewidth=GOLD_PMP_LOWESS_LINEWIDTH,
-                    zorder=4,
-                )
-            ax.axvline(
-                1.0,
-                color="black",
-                linestyle="--",
-                linewidth=1.0,
-                zorder=1,
-            )
-            ax.grid(alpha=0.18)
-            ax.tick_params(
-                labelsize=14,
-                axis="x",
-                labelbottom=True,
-            )
-            ax.set_xlabel(
-                DIAGNOSTIC_XLABELS[diagnostic],
-                fontsize=12,
-            )
-
-    fig.canvas.draw()
-    for ax, model in zip(axes[0], VISUALIZATION_MODELS, strict=True):
-        position = ax.get_position()
-        strip = fig.add_axes([position.x0, position.y1 + 0.006, position.width, 0.046])
-        strip.set_facecolor("#D9D9D9")
-        strip.text(
-            0.5,
-            0.5,
-            rf"Assumed $M_{{{model.removeprefix('m')}}}$",
-            ha="center",
-            va="center",
-            fontsize=20,
-        )
-        strip.set_xticks([])
-        strip.set_yticks([])
-    for ax, diagnostic in zip(axes[:, -1], diagnostics, strict=True):
-        position = ax.get_position()
-        strip = fig.add_axes(
-            [
-                position.x1 + 0.006,
-                position.y0,
-                EMPIRICAL_GRID_ROW_STRIP_WIDTH,
-                position.height,
-            ]
-        )
-        strip.set_facecolor("#D9D9D9")
-        strip.text(
-            0.5,
-            0.5,
-            f"{S4D_SUMMARY_LABEL}\n{DIAGNOSTIC_LABELS[diagnostic]}",
-            ha="center",
-            va="center",
-            rotation=-90,
-            fontsize=18,
-        )
-        strip.set_xticks([])
-        strip.set_yticks([])
-
-    fig.supylabel(
-        r"$\widehat{p}(M_j\mid y)-p(M_j\mid y)$",
-        x=0.015,
-        fontsize=18,
-    )
-    fig.legend(
-        handles=_gold_pmp_grid_handles(),
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.02),
-        ncol=3,
-        frameon=False,
-        fontsize=14,
-    )
-    colorbar_ax = fig.add_axes([0.90, 0.20, 0.016, 0.62])
-    colorbar = fig.colorbar(
-        plt.cm.ScalarMappable(norm=norm, cmap=cmap),
-        cax=colorbar_ax,
-    )
-    colorbar.set_label("Gold-standard PMP", fontsize=16)
-    colorbar.ax.tick_params(labelsize=14)
-    paths = _save_visualization_figure(fig, output_stem)
-    plt.close(fig)
-    return paths
-
-
-def generate_s4d_diagnostic_gold_pmp_grid(
-    loss_variant: str = "without_mmd",
-    output_root: str | Path | None = None,
-    gold_pmp_cmap: str = GOLD_PMP_HIGH_CONTRAST_CMAP,
-    show_max_error: bool = False,
-    xscale: str = RHO_XSCALE,
-    yscale: AxisScaleSpec = "linear",
-    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
-    y_symlog_linthresh: float = PMP_SYMLOG_LINTHRESH,
-) -> dict[str, Path]:
-    """Load data and generate the S=4D empirical four-diagnostic PMP grid."""
-    data = load_s4d_empirical_diagnostic_data(loss_variant=loss_variant)
-    root = (
-        Path(output_root)
-        if output_root is not None
-        else RESULT_DIR / "plots" / "s4d_diagnostic_comparison"
-    )
-    return plot_s4d_diagnostic_gold_pmp_grid(
-        data,
-        root / loss_variant / "s4d_gold_pmp_by_diagnostic",
-        gold_pmp_cmap=gold_pmp_cmap,
-        show_max_error=show_max_error,
-        xscale=xscale,
-        yscale=_resolve_metric_scale(yscale, "pmp"),
-        x_symlog_linthresh=x_symlog_linthresh,
-        y_symlog_linthresh=y_symlog_linthresh,
-    )
-
-
-def load_empirical_diagnostic_comparison_data(
-    loss_variant: str = "without_mmd",
-    diagnostics: tuple[str, ...] = S4D_DIAGNOSTIC_ORDER,
-) -> pd.DataFrame:
-    """Load all empirical summary dimensions for a diagnostic comparison."""
-    if loss_variant not in LOSS_VARIANTS:
-        raise ValueError(f"loss_variant must be one of {tuple(LOSS_VARIANTS)}")
-    unknown = tuple(
-        diagnostic for diagnostic in diagnostics if diagnostic not in DIAGNOSTICS
-    )
-    if unknown:
-        raise ValueError(f"Unknown diagnostics: {unknown}")
-    _, summary_specs = LOSS_VARIANTS[loss_variant]
-    frames = []
-    for diagnostic in diagnostics:
-        frames.append(
-            load_visualization_data(
-                diagnostic,
-                summary_specs,
-                sources=("empirical",),
-            ).assign(diagnostic=diagnostic)
-        )
-    data = pd.concat(frames, ignore_index=True).assign(
-        log10_logml_error=lambda frame: frame["signed_logml_error"] / np.log(10.0)
-    )
-    data["diagnostic"] = pd.Categorical(
-        data["diagnostic"],
-        categories=diagnostics,
-        ordered=True,
-    )
-    return data.sort_values(
-        ["diagnostic", "model", "summary", "dataset", "id"]
-    ).reset_index(drop=True)
-
-
-def _plot_empirical_metric_diagnostic_loess_grid(
-    data: pd.DataFrame,
-    output_stem: str | Path,
-    value_column: str,
-    ylabel: str,
-    thresholds: tuple[float, ...],
-    *,
-    central_interval: float | None = None,
-    loess_on_symlog_x: bool = False,
-    nonnegative: bool = False,
-    diagnostics: tuple[str, ...] = S4D_DIAGNOSTIC_ORDER,
-    loess_frac: float = LOWESS_FRAC["empirical"],
-    xscale: str = RHO_XSCALE,
-    yscale: str = "linear",
-    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
-    y_symlog_linthresh: float = 1.0,
-) -> dict[str, Path]:
-    """Plot a 4x2 empirical metric grid with colored summary LOWESS curves."""
-    required = {
-        "diagnostic",
-        "summary",
-        "model",
-        "rho",
-        "rho_low",
-        value_column,
-    }
-    missing = sorted(required.difference(data.columns))
-    if missing:
-        raise ValueError(f"Diagnostic LOWESS grid is missing columns: {missing}")
-    reference_data = data.loc[
-        data["diagnostic"].isin(diagnostics)
-        & data["summary"].isin(VISUALIZATION_SUMMARY_LABELS)
-        & data["model"].isin(VISUALIZATION_MODELS)
-    ].copy()
-    plot_data = (
-        _central_interval(
-            reference_data,
-            value_column,
-            ["diagnostic", "model", "summary"],
-            central_interval,
-        )
-        if central_interval is not None
-        else reference_data
-    )
-    if plot_data.empty:
-        raise ValueError("Diagnostic LOWESS grid has no data to plot")
-
-    fig, axes = plt.subplots(
-        len(diagnostics),
-        len(VISUALIZATION_MODELS),
-        figsize=(9, 13),
-        sharex=False,
-        sharey=True,
-        squeeze=False,
-    )
-    fig.subplots_adjust(
-        left=0.14,
-        right=0.88,
-        bottom=0.16,
-        top=0.88,
-        wspace=0.20,
-        hspace=0.48,
-    )
-    panel_order = tuple(
-        f"{diagnostic}|{model}"
-        for diagnostic in diagnostics
-        for model in VISUALIZATION_MODELS
-    )
-    limit_data = reference_data.assign(
-        _rho_panel=(
-            reference_data["diagnostic"].astype("string")
-            + "|"
-            + reference_data["model"].astype("string")
-        )
-    )
-    x_limits_by_panel = _axis_limits_by_group(
-        limit_data,
-        "_rho_panel",
-        panel_order,
-        scale=xscale,
-        linthresh=x_symlog_linthresh,
-    )
-    y_limits = _visualization_limits(
-        plot_data[value_column],
-        include=(*thresholds, 0.0),
-        nonnegative=nonnegative,
-    )
-
-    for row, diagnostic in enumerate(diagnostics):
-        for column, model in enumerate(VISUALIZATION_MODELS):
-            ax = axes[row, column]
-            reference_panel = reference_data.loc[
-                reference_data["diagnostic"].eq(diagnostic)
-                & reference_data["model"].eq(model)
-            ]
-            panel = plot_data.loc[
-                plot_data["diagnostic"].eq(diagnostic) & plot_data["model"].eq(model)
-            ]
-            rho_low = (
-                reference_panel.groupby("summary", observed=True)["rho_low"]
-                .median()
-                .reindex(VISUALIZATION_SUMMARY_LABELS)
-                .dropna()
-            )
-            if not rho_low.empty:
-                _shade_typical_set(
-                    ax,
-                    float(rho_low.min()),
-                    _threshold_band(thresholds),
-                )
-            ax.axvline(
-                1.0,
-                color="0.2",
-                linestyle="--",
-                linewidth=1.0,
-                zorder=1,
-            )
-            for threshold in thresholds:
-                ax.axhline(
-                    threshold,
-                    color="0.35",
-                    linestyle=":",
-                    linewidth=THRESHOLD_LINEWIDTH,
-                    zorder=1,
-                )
-            ax.axhline(0.0, color="0.55", linewidth=0.7, zorder=1)
-
-            for summary in VISUALIZATION_SUMMARY_LABELS:
-                points = panel.loc[panel["summary"].eq(summary)].dropna(
-                    subset=["rho", value_column]
-                )
-                if points.empty:
-                    continue
-                color = SUMMARY_COLORS[summary]
-                ax.scatter(
-                    points["rho"],
-                    points[value_column],
-                    s=20,
-                    color=color,
-                    alpha=0.50,
-                    edgecolors="none",
-                    zorder=2,
-                )
-                curve_x, curve_y = (
-                    _symlog_lowess_curve(
-                        points["rho"],
-                        points[value_column],
-                        frac=loess_frac,
-                    )
-                    if loess_on_symlog_x and xscale == "symlog"
-                    else _lowess_curve(
-                        points["rho"],
-                        points[value_column],
-                        frac=loess_frac,
-                    )
-                )
-                ax.plot(
-                    curve_x,
-                    curve_y,
-                    color=color,
-                    linewidth=2.0,
-                    zorder=3,
-                )
-
-            _set_axis_scale(
-                ax,
-                "x",
-                xscale,
-                linthresh=x_symlog_linthresh,
-            )
-            _set_axis_scale(
-                ax,
-                "y",
-                yscale,
-                linthresh=y_symlog_linthresh,
-            )
-            ax.set_xlim(x_limits_by_panel[f"{diagnostic}|{model}"])
-            ax.set_ylim(y_limits)
-            ax.grid(color="0.90", linewidth=0.6, alpha=0.7)
-            ax.tick_params(
-                labelsize=14,
-                axis="x",
-                labelbottom=True,
-            )
-            ax.set_xlabel(
-                DIAGNOSTIC_XLABELS[diagnostic],
-                fontsize=12,
-            )
-
-    fig.canvas.draw()
-    for ax, model in zip(axes[0], VISUALIZATION_MODELS, strict=True):
-        position = ax.get_position()
-        strip = fig.add_axes([position.x0, position.y1 + 0.006, position.width, 0.046])
-        strip.set_facecolor("#D9D9D9")
-        strip.text(
-            0.5,
-            0.5,
-            rf"Assumed $M_{{{model.removeprefix('m')}}}$",
-            ha="center",
-            va="center",
-            fontsize=20,
-        )
-        strip.set_xticks([])
-        strip.set_yticks([])
-    for ax, diagnostic in zip(axes[:, -1], diagnostics, strict=True):
-        position = ax.get_position()
-        strip = fig.add_axes(
-            [
-                position.x1 + 0.006,
-                position.y0,
-                EMPIRICAL_GRID_ROW_STRIP_WIDTH,
-                position.height,
-            ]
-        )
-        strip.set_facecolor("#D9D9D9")
-        strip.text(
-            0.5,
-            0.5,
-            DIAGNOSTIC_LABELS[diagnostic],
-            ha="center",
-            va="center",
-            rotation=-90,
-            fontsize=18,
-        )
-        strip.set_xticks([])
-        strip.set_yticks([])
-
-    fig.supylabel(ylabel, x=0.015, fontsize=18)
-    handles = _summary_handles(
-        VISUALIZATION_SUMMARY_LABELS,
-        SUMMARY_COLORS,
-        show_line=True,
-    )
-    handles.append(
-        Patch(
-            facecolor=TYPICAL_SET_FILL,
-            edgecolor="none",
-            alpha=0.70,
-            label="typical set",
-        )
-    )
-    fig.legend(
-        handles=handles,
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.02),
-        ncol=5,
-        frameon=False,
-        fontsize=14,
-    )
-    paths = _save_visualization_figure(fig, output_stem)
-    plt.close(fig)
-    return paths
-
-
-def plot_log10_logml_diagnostic_loess_grid(
-    data: pd.DataFrame,
-    output_stem: str | Path,
-    diagnostics: tuple[str, ...] = S4D_DIAGNOSTIC_ORDER,
-    loess_frac: float = LOWESS_FRAC["empirical"],
-    xscale: str = RHO_XSCALE,
-    yscale: str = "linear",
-    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
-    y_symlog_linthresh: float = LOGML_SYMLOG_LINTHRESH,
-) -> dict[str, Path]:
-    """Plot empirical base-10 logML error for four diagnostics."""
-    return _plot_empirical_metric_diagnostic_loess_grid(
-        data,
-        output_stem,
-        "log10_logml_error",
-        (
-            r"$\log_{10}\widehat{p}(y\mid M_j)"
-            r"-\log_{10}p(y\mid M_j)$"
-        ),
-        (),
-        central_interval=LOGML_CENTRAL_INTERVAL,
-        loess_on_symlog_x=True,
-        diagnostics=diagnostics,
-        loess_frac=loess_frac,
-        xscale=xscale,
-        yscale=yscale,
-        x_symlog_linthresh=x_symlog_linthresh,
-        y_symlog_linthresh=y_symlog_linthresh,
-    )
-
-
-def plot_posterior_mmd_diagnostic_loess_grid(
-    data: pd.DataFrame,
-    output_stem: str | Path,
-    diagnostics: tuple[str, ...] = S4D_DIAGNOSTIC_ORDER,
-    loess_frac: float = LOWESS_FRAC["empirical"],
-    xscale: str = RHO_XSCALE,
-    yscale: str = "linear",
-    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
-    y_symlog_linthresh: float = 1.0,
-) -> dict[str, Path]:
-    """Plot empirical raw posterior MMD for four diagnostics."""
-    return _plot_empirical_metric_diagnostic_loess_grid(
-        data,
-        output_stem,
-        "observed_mmd",
-        "Posterior MMD",
-        (),
-        nonnegative=True,
-        diagnostics=diagnostics,
-        loess_frac=loess_frac,
-        xscale=xscale,
-        yscale=yscale,
-        x_symlog_linthresh=x_symlog_linthresh,
-        y_symlog_linthresh=y_symlog_linthresh,
-    )
-
-
-def plot_pmp_diagnostic_loess_grid(
-    data: pd.DataFrame,
-    output_stem: str | Path,
-    diagnostics: tuple[str, ...] = S4D_DIAGNOSTIC_ORDER,
-    loess_frac: float = LOWESS_FRAC["empirical"],
-    xscale: str = RHO_XSCALE,
-    yscale: str = "linear",
-    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
-    y_symlog_linthresh: float = PMP_SYMLOG_LINTHRESH,
-) -> dict[str, Path]:
-    """Plot empirical signed PMP error for four diagnostics."""
-    return _plot_empirical_metric_diagnostic_loess_grid(
-        data,
-        output_stem,
-        "signed_pmp_error",
-        r"$\widehat{p}(M_j\mid y)-p(M_j\mid y)$",
-        (),
-        diagnostics=diagnostics,
-        loess_frac=loess_frac,
-        xscale=xscale,
-        yscale=yscale,
-        x_symlog_linthresh=x_symlog_linthresh,
-        y_symlog_linthresh=y_symlog_linthresh,
-    )
-
-
-def generate_log10_logml_diagnostic_loess_grid(
-    loss_variant: str = "without_mmd",
-    output_root: str | Path | None = None,
-    xscale: str = RHO_XSCALE,
-    yscale: AxisScaleSpec = "symlog",
-    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
-    y_symlog_linthresh: float = LOGML_SYMLOG_LINTHRESH,
-) -> dict[str, Path]:
-    """Load data and generate the four-diagnostic empirical log10-ML grid."""
-    data = load_empirical_diagnostic_comparison_data(loss_variant=loss_variant)
-    root = (
-        Path(output_root)
-        if output_root is not None
-        else RESULT_DIR / "plots" / "s4d_diagnostic_comparison"
-    )
-    return plot_log10_logml_diagnostic_loess_grid(
-        data,
-        root / loss_variant / "log10_logml_error_by_diagnostic",
-        xscale=xscale,
-        yscale=_resolve_metric_scale(yscale, "logml"),
-        x_symlog_linthresh=x_symlog_linthresh,
-        y_symlog_linthresh=y_symlog_linthresh,
-    )
-
-
-def generate_posterior_mmd_diagnostic_loess_grid(
-    loss_variant: str = "without_mmd",
-    output_root: str | Path | None = None,
-    xscale: str = RHO_XSCALE,
-    yscale: AxisScaleSpec = "linear",
-    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
-    y_symlog_linthresh: float = 1.0,
-) -> dict[str, Path]:
-    """Load data and generate the four-diagnostic posterior-MMD grid."""
-    data = load_empirical_diagnostic_comparison_data(loss_variant=loss_variant)
-    root = (
-        Path(output_root)
-        if output_root is not None
-        else RESULT_DIR / "plots" / "s4d_diagnostic_comparison"
-    )
-    return plot_posterior_mmd_diagnostic_loess_grid(
-        data,
-        root / loss_variant / "posterior_mmd_by_diagnostic",
-        xscale=xscale,
-        yscale=_resolve_metric_scale(yscale, "posterior_mmd"),
-        x_symlog_linthresh=x_symlog_linthresh,
-        y_symlog_linthresh=y_symlog_linthresh,
-    )
-
-
-def generate_pmp_diagnostic_loess_grid(
-    loss_variant: str = "without_mmd",
-    output_root: str | Path | None = None,
-    xscale: str = RHO_XSCALE,
-    yscale: AxisScaleSpec = "linear",
-    x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
-    y_symlog_linthresh: float = PMP_SYMLOG_LINTHRESH,
-) -> dict[str, Path]:
-    """Load data and generate the four-diagnostic empirical PMP-error grid."""
-    data = load_empirical_diagnostic_comparison_data(loss_variant=loss_variant)
-    root = (
-        Path(output_root)
-        if output_root is not None
-        else RESULT_DIR / "plots" / "s4d_diagnostic_comparison"
-    )
-    return plot_pmp_diagnostic_loess_grid(
-        data,
-        root / loss_variant / "pmp_error_by_diagnostic",
-        xscale=xscale,
-        yscale=_resolve_metric_scale(yscale, "pmp"),
-        x_symlog_linthresh=x_symlog_linthresh,
-        y_symlog_linthresh=y_symlog_linthresh,
-    )
-
-
 def load_calibrated_visualization_data(
     diagnostic: str,
     summary_specs: SummarySpecs,
-    threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
+    threshold_path: str | Path | None = None,
     sources: tuple[str, ...] = ("empirical",),
     models: tuple[str, ...] = VISUALIZATION_MODELS,
     rho_normalization: str = "centered",
@@ -3676,7 +3082,7 @@ def load_calibrated_visualization_data(
 def generate_calibrated_gold_pmp_lowess_grid(
     diagnostic: str,
     output_root: str | Path | None = None,
-    threshold_path: str | Path = CALIBRATION_THRESHOLD_PATH,
+    threshold_path: str | Path | None = None,
     summary_specs: SummarySpecs = NO_MMD_SUMMARY_SPECS,
     output_variant: str = "without_mmd",
     models: tuple[str, ...] = VISUALIZATION_MODELS,
@@ -3739,3 +3145,170 @@ def generate_all_diagnostic_visualizations(
         }
         for loss_variant in loss_variants
     }
+
+
+def _validate_diagnostic_notebook_thresholds(
+    thresholds: pd.DataFrame,
+    *,
+    posterior_mmd_quantile: float,
+    signed_error_coverage: float,
+    expected_calibration_datasets: int,
+) -> None:
+    """Check the calibration interval and sample-count contract used by notebooks."""
+    required = {"metric", "lower_quantile", "upper_quantile", "n_values"}
+    missing = required.difference(thresholds.columns)
+    if missing:
+        raise ValueError(f"Calibration thresholds are missing columns: {sorted(missing)}")
+    signed_tail = (1.0 - signed_error_coverage) / 2.0
+    for metric, low, high, count in (
+        ("posterior_mmd", 0.0, posterior_mmd_quantile, expected_calibration_datasets),
+        ("signed_logml_error", signed_tail, 1.0 - signed_tail, expected_calibration_datasets),
+        ("signed_pmp_error", signed_tail, 1.0 - signed_tail, len(MODELS) * expected_calibration_datasets),
+    ):
+        rows = thresholds.loc[thresholds["metric"].eq(metric)]
+        if rows.empty or not (
+            np.isclose(rows["lower_quantile"], low).all()
+            and np.isclose(rows["upper_quantile"], high).all()
+            and rows["n_values"].eq(count).all()
+        ):
+            raise ValueError(
+                f"{metric} thresholds must use interval [{low:g}, {high:g}] "
+                f"and {count} calibration values per group"
+            )
+
+
+def run_diagnostic_notebook(
+    metric: str,
+    variant: str = "noMMD",
+    *,
+    xscale: str = "symlog",
+    yscale: AxisScaleSpec | None = None,
+    normalize_metrics: bool = False,
+    y_symlog_linthresh: float | None = None,
+    show_loess: bool = True,
+    show_empirical_only_loess: bool = True,
+    include_empirical_in_loess: bool = True,
+    loess_frac_by_fit_source: Mapping[str, float] | None = None,
+    empirical_legend_alpha: float = 0.45,
+    posterior_mmd_quantile: float = 0.95,
+    signed_error_coverage: float = 0.90,
+    expected_calibration_datasets: int = 100,
+    output_root: str | Path | None = None,
+    overlay_output_root: str | Path | None = None,
+    threshold_path: str | Path | None = None,
+    refresh_thresholds: bool = True,
+) -> dict[str, object]:
+    """Run one of the twelve calibrated diagnostic notebook workflows.
+
+    ``metric`` selects density/l2/linf/mmd; ``variant`` selects the checkpoint,
+    100-dataset thresholds, and output directories together. With-MMD figures
+    show simulated and empirical data separately. No-MMD figures overlay both
+    sources, also show empirical-only figures, and include the all-model PMP
+    grid. All options are passed explicitly; no plotting globals are replaced.
+
+    Set ``refresh_thresholds=False`` to read the existing table without rewriting
+    calibration results. Figure output roots can be redirected independently.
+    """
+    from ..calibration.thresholds import CALIBRATION_VARIANTS, calculate_and_save_thresholds
+
+    if metric not in DIAGNOSTICS:
+        raise ValueError(f"Unknown diagnostic: {metric!r}; choose one of {DIAGNOSTICS}")
+    if variant not in CALIBRATION_VARIANTS:
+        raise ValueError(f"Unknown calibration variant: {variant!r}")
+    if expected_calibration_datasets < 1:
+        raise ValueError("expected_calibration_datasets must be positive")
+    with_mmd = variant == "withMMD"
+    summary_specs = _make_summary_specs(
+        summary_base_distribution="normal" if with_mmd else None,
+        run_suffix=None if with_mmd else variant,
+    )
+    output_variant = {
+        "withMMD": "with_mmd",
+        "noMMD": "without_mmd",
+        "noMMD_rerun1": "without_mmd_rerun1",
+    }[variant]
+    threshold_path = (
+        Path(threshold_path) if threshold_path is not None
+        else BASE_DIR / f"calibration_outputs_100_{variant}" / "thresholds.csv"
+    )
+    output_root = (
+        Path(output_root) if output_root is not None
+        else RESULT_DIR / "plots" / f"summary_diagnostics_{variant}_calibrated_thresholds"
+    )
+    overlay_output_root = (
+        Path(overlay_output_root) if overlay_output_root is not None
+        else RESULT_DIR / "plots" / f"diagnostic_overlays_calibrated_{variant}"
+    )
+    if yscale is None:
+        yscale = {"posterior_mmd": "linear", "logml": "symlog", "pmp": "linear"}
+    if y_symlog_linthresh is None:
+        y_symlog_linthresh = 1.0 if with_mmd else 0.1
+    if refresh_thresholds:
+        thresholds, _ = calculate_and_save_thresholds(
+            input_path=threshold_path.parent / "per_dataset_metrics.csv",
+            thresholds_path=threshold_path,
+            results_path=threshold_path.parent / "per_dataset_results.csv",
+            quantile=posterior_mmd_quantile,
+            signed_error_coverage=signed_error_coverage,
+        )
+    else:
+        thresholds = pd.read_csv(threshold_path)
+    _validate_diagnostic_notebook_thresholds(
+        thresholds,
+        posterior_mmd_quantile=posterior_mmd_quantile,
+        signed_error_coverage=signed_error_coverage,
+        expected_calibration_datasets=expected_calibration_datasets,
+    )
+    comparisons = run_calibrated_comparison_pipeline(
+        metrics=(metric,),
+        model_sets=MODEL_SETS,
+        summary_specs=summary_specs,
+        output_root=output_root,
+        threshold_path=threshold_path,
+        xscale=xscale,
+        yscale=yscale,
+        y_symlog_linthresh=y_symlog_linthresh,
+        normalize_metrics=normalize_metrics,
+        plot_style="standard" if with_mmd else "combined",
+        show_loess=show_loess,
+        show_empirical_only_loess=show_empirical_only_loess,
+        include_empirical_in_loess=include_empirical_in_loess,
+        loess_frac_by_fit_source=loess_frac_by_fit_source,
+        empirical_legend_alpha=empirical_legend_alpha,
+    )
+    grid_options = dict(
+        output_root=overlay_output_root,
+        threshold_path=threshold_path,
+        summary_specs=summary_specs,
+        output_variant=output_variant,
+        xscale=xscale,
+        yscale=yscale,
+        normalize_metrics=normalize_metrics,
+    )
+    gold_pmp_paths = generate_calibrated_gold_pmp_lowess_grid(metric, **grid_options)
+    all_model_paths = (
+        generate_calibrated_gold_pmp_lowess_grid(metric, models=MODELS, **grid_options)
+        if not with_mmd else None
+    )
+    return {
+        "metric": metric,
+        "variant": variant,
+        "thresholds": thresholds,
+        "threshold_path": threshold_path,
+        "comparisons": comparisons,
+        "gold_pmp_paths": gold_pmp_paths,
+        "all_model_gold_pmp_paths": all_model_paths,
+    }
+
+
+def display_diagnostic_notebook(result: dict[str, object]) -> None:
+    """Display shared workflow figures in the original notebook order."""
+    print(f"Calibration thresholds: {result['threshold_path']}")
+    for name, comparison in result["comparisons"].items():
+        print(name, comparison["output_root"])
+        display_summary_dimension_comparison(comparison)
+    display_gold_pmp_lowess_grid(result["gold_pmp_paths"])
+    if result["all_model_gold_pmp_paths"] is not None:
+        display_gold_pmp_lowess_grid(
+            result["all_model_gold_pmp_paths"], width=1200, models=MODELS
+        )

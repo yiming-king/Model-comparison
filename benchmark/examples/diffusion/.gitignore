@@ -37,3 +37,6 @@ __pycache__/
 # Well-specified calibration is deliberately isolated from observed-test outputs
 /calibration_outputs/
 /calibration_outputs_rerun1/
+/calibration_outputs_100_*/
+/calibration_reference_100/
+/calibration_increment_70/

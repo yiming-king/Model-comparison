@@ -424,7 +424,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--num-datasets", type=int, default=30)
     parser.add_argument("--num-posterior-samples", type=int, default=1000)
     parser.add_argument(
-        "--logml-method", choices=("log_mean_exp", "mean_log"), default="log_mean_exp"
+        "--logml-method", choices=("log_mean_exp",), default="log_mean_exp"
     )
     parser.add_argument(
         "--quantile",

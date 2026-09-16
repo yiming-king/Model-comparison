@@ -1,5 +1,30 @@
 # Gaussian case-study diagnostics
 
+For Python training, see [the training guide](approximators/README.md). The
+six presets cover D=20, N=10/100, and S=D/2D/4D: 24 networks across m1--m4.
+All use `DeepSet(summary_dim=S)` and `CouplingFlow()` with BayesFlow network
+defaults, including no summary MMD regularization. Training uses a shared
+100 epochs, batch size 64, 128 batches per epoch, and Adam + CosineDecay
+starting at 1e-4; these optimizer settings are project choices.
+
+New files carry `_bf_default`, for example
+`m1_s_20d_100n_bf_default.keras`. To compare both observation counts under
+the new settings, retrain all 24 networks; adding only the eight missing
+N=100, S=D/4D networks leaves the older models with different settings.
+The training guide includes dry-run, complete-grid, eight-network, and smoke
+commands. Original notebooks, saved weights, and cached results remain as
+historical experiments. The older N=100 NPE names use `40d_100n` because their
+actual summary size is S=40 (2D), with raw D=20. The separate direct classifier
+retains `direct_s_20d_100n.keras`, which uses raw D/N in its name.
+
+The analysis examples below refer to historical network tags. For the new
+runs, explicitly select `20d_10n_bf_default 40d_10n_bf_default 80d_10n_bf_default`
+with `--num-obs 10`, or
+`20d_100n_bf_default 40d_100n_bf_default 80d_100n_bf_default` with
+`--num-obs 100`, through `--network-tags`. Regenerate per-network calibration,
+summary references, and OOD results; the training guide shows how to store
+the new calibration separately and select its threshold file.
+
 The Gaussian analysis follows the diffusion-case-study layout. It supports
 `l2`, `linf`, `mmd`, and `density` diagnostics and calibrates approximation
 errors separately on well-specified NPE versus analytical Gaussian reference
@@ -134,7 +159,7 @@ The plotting-only notebooks follow a regular `diagnostic × summary-size` grid:
 | --- | --- | --- | --- |
 | L2 | `ood_analysis_l2_20d_10n.ipynb` | `ood_analysis_l2_40d_10n.ipynb` | `ood_analysis_l2_80d_10n.ipynb` |
 | Linf | `ood_analysis_linf_20d_10n.ipynb` | `ood_analysis_linf_40d_10n.ipynb` | `ood_analysis_linf_80d_10n.ipynb` |
-| MMD | `ood_analysis_mmd_20d_10n.ipynb` | `ood_analysis_mmd_40d_10n.ipynb` | `ood_analysis_mmd_80d_10n.ipynb` |
+| Kernel | `ood_analysis_mmd_20d_10n.ipynb` | `ood_analysis_mmd_40d_10n.ipynb` | `ood_analysis_mmd_80d_10n.ipynb` |
 | Density | `ood_analysis_density_20d_10n.ipynb` | `ood_analysis_density_40d_10n.ipynb` | `ood_analysis_density_80d_10n.ipynb` |
 
 Every notebook loads posterior, logML, and PMP frames through the same helper.
@@ -151,7 +176,7 @@ Use `--overwrite-datasets` or `--overwrite-inference` when the corresponding
 cache must be rebuilt. Python computation is plot-free by default; pass
 `--plots` only when command-line figure generation is wanted.
 
-## 3. Run MMD and density diagnostics
+## 3. Run Kernel and density diagnostics
 
 After the threshold and OOD inference commands finish, this command evaluates
 `mmd` and `density` for every available summary configuration:

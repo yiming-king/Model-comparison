@@ -1,0 +1,51 @@
+{
+  "groups": 96,
+  "all_metrics_match": true,
+  "checks": {
+    "TP": {
+      "matched": 96,
+      "total": 96
+    },
+    "FP": {
+      "matched": 96,
+      "total": 96
+    },
+    "FN": {
+      "matched": 96,
+      "total": 96
+    },
+    "TN": {
+      "matched": 96,
+      "total": 96
+    },
+    "n": {
+      "matched": 96,
+      "total": 96
+    },
+    "q05": {
+      "matched": 96,
+      "total": 96
+    },
+    "q95": {
+      "matched": 96,
+      "total": 96
+    },
+    "FNR": {
+      "matched": 96,
+      "total": 96
+    },
+    "FPR": {
+      "matched": 96,
+      "total": 96
+    },
+    "AUC": {
+      "matched": 96,
+      "total": 96
+    }
+  },
+  "FNR_NA_count": 44,
+  "FPR_NA_count": 0,
+  "AUC_NA_count": 44,
+  "all_FNR_NA_have_zero_error_positives": true,
+  "all_groups_have_17_cases": true
+}

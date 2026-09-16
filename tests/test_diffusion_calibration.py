@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
+import pytest
 
+from benchmark.examples.diffusion.calibration import pipeline, thresholds as threshold_module
 from benchmark.examples.diffusion.calibration.thresholds import calculate_thresholds
 from benchmark.examples.diffusion.config import MODEL_LABELS, TrainingConfig
 from benchmark.examples.diffusion.results.summary_dimension_comparison import (
@@ -20,6 +22,150 @@ from benchmark.examples.diffusion.results.summary_dimension_comparison import (
     load_calibration_thresholds,
 )
 from benchmark.examples.diffusion.results.results import pmp_from_log_marginals
+
+
+def test_calibration_defaults_use_100_shared_datasets_and_current_variants():
+    args = pipeline._parse_args(["generate"])
+    assert args.k == 100
+    assert args.summary_multipliers == [1, 2, 4]
+    assert args.training_settings == ["without_mmd"]
+    assert args.without_mmd_run_suffix == "noMMD"
+    assert args.reference_root.name == "calibration_reference_100"
+    assert args.output_root.name == "calibration_outputs_100_noMMD"
+
+    paths = pipeline.CalibrationPaths()
+    assert paths.datasets == args.reference_root / "datasets"
+    assert paths.mcmc == args.reference_root / "mcmc"
+    assert paths.manifest == args.reference_root / "dataset_manifest.csv"
+    assert paths.thresholds == args.output_root / "thresholds.csv"
+
+
+@pytest.mark.parametrize("variant", ["withMMD", "noMMD", "noMMD_rerun1"])
+def test_calibration_variant_routes_checkpoints_and_thresholds_together(variant):
+    args = pipeline._parse_args(["all", "--variant", variant])
+    configs = pipeline.build_npe_configs(
+        args.summary_multipliers,
+        args.training_settings,
+        args.without_mmd_run_suffix,
+        args.embed_dim,
+    )
+    assert args.output_root.name == f"calibration_outputs_100_{variant}"
+    assert all(
+        config.training.run_suffix == (None if variant == "withMMD" else variant)
+        for config in configs
+    )
+    threshold_args = threshold_module._parse_args(["--variant", variant])
+    assert threshold_args.calibration_root == args.output_root
+
+
+def test_calibration_explicit_roots_and_legacy_training_flags_are_unambiguous(tmp_path):
+    args = pipeline._parse_args(
+        [
+            "all", "--training-settings", "without_mmd",
+            "--without-mmd-run-suffix", "noMMD_rerun1",
+        ]
+    )
+    assert args.variant == "noMMD_rerun1"
+    assert args.output_root.name == "calibration_outputs_100_noMMD_rerun1"
+
+    reference = tmp_path / "reference"
+    output = tmp_path / "results"
+    args = pipeline._parse_args(
+        [
+            "all", "--reference-root", str(reference), "--output-root", str(output),
+            "--training-settings", "with_mmd", "without_mmd", "--k", "7",
+        ]
+    )
+    paths = pipeline.CalibrationPaths(args.output_root, args.reference_root)
+    assert args.k == 7
+    assert paths.datasets == reference / "datasets"
+    assert paths.manifest == reference / "dataset_manifest.csv"
+    assert paths.per_dataset_metrics == output / "per_dataset_metrics.csv"
+    assert threshold_module._parse_args(
+        ["--calibration-root", str(output)]
+    ).calibration_root == output
+    with pytest.raises(SystemExit):
+        pipeline._parse_args(
+            ["metrics", "--variant", "withMMD", "--training-settings", "without_mmd"]
+        )
+    with pytest.raises(SystemExit):
+        pipeline._parse_args(
+            ["metrics", "--training-settings", "with_mmd", "without_mmd"]
+        )
+
+
+def test_generate_default_100_datasets_is_deterministic_and_protects_cache(tmp_path, monkeypatch):
+    from benchmark.examples.diffusion import simulators
+
+    class SmallSimulator:
+        def sample(self, count):
+            assert count == 1
+            return {
+                "rt": np.random.random((1, 384)),
+                "conditions": np.zeros((1, 384), dtype=int),
+                "alpha": np.ones((1, 1)),
+                "nu": np.ones((1, 1)),
+                "tau": np.ones((1, 1)),
+            }
+
+    monkeypatch.setattr(
+        simulators, "SIMULATORS", {model: SmallSimulator() for model in pipeline.MODELS}
+    )
+    args = pipeline._parse_args(["generate"])
+    paths = pipeline.CalibrationPaths(tmp_path / "results", tmp_path / "reference")
+    kwargs = {
+        "models": list(pipeline.MODELS), "k": args.k, "base_seed": args.base_seed,
+    }
+    manifest = pipeline.generate_datasets(paths, **kwargs, overwrite=False)
+    assert len(manifest) == 400
+    assert manifest.groupby("generating_model").size().to_dict() == {
+        model: 100 for model in pipeline.MODELS
+    }
+    assert manifest["dataset_seed"].nunique() == 400
+    expected_ids = [f"s{index:03d}" for index in range(100)]
+    for model in pipeline.MODELS:
+        assert sorted(path.stem for path in (paths.datasets / model).glob("s*.json")) == expected_ids
+        assert manifest.loc[manifest["generating_model"].eq(model), "dataset_seed"].tolist() == [
+            pipeline.dataset_seed(args.base_seed, model, index) for index in range(100)
+        ]
+    sample_path = paths.datasets / "m0" / "s099.json"
+    original = sample_path.read_bytes()
+    pipeline.generate_datasets(paths, **kwargs, overwrite=True)
+    assert sample_path.read_bytes() == original
+    sample_mtime = sample_path.stat().st_mtime_ns
+    pipeline.generate_datasets(paths, **kwargs, overwrite=False)
+    assert sample_path.stat().st_mtime_ns == sample_mtime
+    with pytest.raises(ValueError, match="do not match"):
+        pipeline.generate_datasets(paths, **{**kwargs, "k": 30}, overwrite=False)
+    assert sample_path.read_bytes() == original
+    assert not paths.root.exists()
+
+
+def test_calibration_fit_resume_requires_used_draws_and_all_candidate_diagnostics(tmp_path):
+    diagnostic = {
+        "id": "s000", "mcmc_seed": 2025, "mcmc_elapsed_seconds": 1.0,
+        "bridge_elapsed_seconds": 1.0, "fit_elapsed_seconds": 2.0,
+        "max_rhat": 1.2, "min_n_eff": 100, "min_n_eff_ratio": 0.5,
+        "num_chains": 4, "num_postwarmup_draws": 2048, "num_divergent": 0,
+        "num_max_treedepth": 0, "min_ebfmi": 0.5, "converged": False,
+    }
+    pd.DataFrame([{"id": "s000", "estimate": 0.0, "sd": 0.1}]).to_csv(
+        tmp_path / "bridgesampling.csv", index=False
+    )
+    diagnostic_path = tmp_path / "convergence_diagnostics.csv"
+    pd.DataFrame([diagnostic]).to_csv(diagnostic_path, index=False)
+    assert pipeline._fit_is_complete(tmp_path, {"s000"}, require_posterior_draws=False)
+    assert not pipeline._fit_is_complete(tmp_path, {"s000"})
+    draws = tmp_path / "posterior_draws"
+    draws.mkdir()
+    (draws / "s000.csv").write_text("parameter\n" + "1\n" * pipeline.GOLD_POSTERIOR_DRAWS)
+    assert pipeline._fit_is_complete(tmp_path, {"s000"})
+    assert not (tmp_path / "parameter_diagnostics").exists()
+    assert not pipeline._fit_is_complete(tmp_path, {"s000", "s001"}, require_posterior_draws=False)
+    pd.DataFrame([{key: value for key, value in diagnostic.items() if key != "converged"}]).to_csv(
+        diagnostic_path, index=False
+    )
+    assert not pipeline._fit_is_complete(tmp_path, {"s000"}, require_posterior_draws=False)
 
 
 def test_model_priors_are_used_in_pmp():

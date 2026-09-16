@@ -34,7 +34,7 @@ REFERENCE_METRICS = ("l2", "linf", "mmd", "density")
 DIAGNOSTIC_XLABELS = {
     "l2": r"Diagnostic: $L_2$-based",
     "linf": r"Diagnostic: $L_\infty$-based",
-    "mmd": "Diagnostic: MMD-based",
+    "mmd": "Diagnostic: Kernel-based",
     "density": "Diagnostic: density-based",
 }
 NEAREST_TWO_CLASS_MARKERS = {
@@ -538,9 +538,9 @@ def compute_logml_and_posteriors(
     assumed_models: tuple[str, ...] = ASSUMED_MODELS,
     logml_method: str | None = None,
 ) -> dict[str, list[dict]]:
-    """Compute posterior samples and logmls, optionally overriding the aggregation method."""
-    if logml_method is not None and logml_method not in {"log_mean_exp", "mean_log"}:
-        raise ValueError("logml_method must be 'log_mean_exp' or 'mean_log'")
+    """Compute posterior samples and logmls using log-mean-exp aggregation."""
+    if logml_method is not None and logml_method != "log_mean_exp":
+        raise ValueError("logml_method must be 'log_mean_exp'")
 
     for assumed in assumed_models:
         calculation = calculations[assumed]
