@@ -1,0 +1,5 @@
+loss_function,network_tag,generating_model,metric,quantile,lower_quantile,upper_quantile,quantile_method,lower_threshold,threshold,median,degenerate_interval,n_values,num_datasets,aggregation,gold_standard
+cross_entropy,direct_cross_entropy,m1,signed_pmp_error,0.9,0.04999999999999999,0.95,linear,-0.006746987154516133,0.006746330013307429,7.424487762364151e-07,False,120,30,all_four_pmp_components_from_well_specified_datasets,analytical
+cross_entropy,direct_cross_entropy,m2,signed_pmp_error,0.9,0.04999999999999999,0.95,linear,0.0,2.04431979157482e-11,1.9637855814877588e-19,False,120,30,all_four_pmp_components_from_well_specified_datasets,analytical
+cross_entropy,direct_cross_entropy,m3,signed_pmp_error,0.9,0.04999999999999999,0.95,linear,-2.0226327692049408e-306,1.5423468031168074e-13,1.3496471979892663e-28,False,120,30,all_four_pmp_components_from_well_specified_datasets,analytical
+cross_entropy,direct_cross_entropy,m4,signed_pmp_error,0.9,0.04999999999999999,0.95,linear,-0.007149236219466538,0.007140136080325512,9.754973575581971e-07,False,120,30,all_four_pmp_components_from_well_specified_datasets,analytical

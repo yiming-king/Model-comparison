@@ -1,0 +1,20 @@
+{
+  "running": null,
+  "completed": [
+    "direct_cross_entropy",
+    "indirect_S4D",
+    "indirect_S1D",
+    "indirect_S2D",
+    "indirect_S6D",
+    "indirect_S1D_noMMD",
+    "indirect_S2D_noMMD",
+    "indirect_S4D_noMMD",
+    "indirect_S6D_noMMD",
+    "indirect_S1D_noMMD_rerun1",
+    "indirect_S2D_noMMD_rerun1",
+    "indirect_S4D_noMMD_rerun1",
+    "indirect_S6D_noMMD_rerun1"
+  ],
+  "complete": true,
+  "updated_at_utc": "2026-09-21T23:32:36.880213+00:00"
+}

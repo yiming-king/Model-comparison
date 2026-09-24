@@ -1,0 +1,88 @@
+{
+  "created_at_utc": "2026-09-21T20:54:13.643366+00:00",
+  "identity": {
+    "schema_version": 1,
+    "loss_function": "cross_entropy",
+    "checkpoint": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/gaussian/networks/direct_cross_entropy.keras",
+    "checkpoint_sha256": "d1266457157b43386f120281e614beaae78b6a82816e967540d08e1e8d85c0ce",
+    "summary_dim": 12,
+    "data_dim": 20,
+    "num_obs": 10,
+    "benchmark_directory": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/gaussian/calibration_outputs/20d_10n",
+    "benchmark_sha256": {
+      "datasets/m1/x.npy": "0a38b1063d13ca64426b95d735c786c4596f0eae7de3dfb540ed79f2e1772f36",
+      "datasets/m1/manifest.csv": "af2031eb14bdcc8e1bd50c421fa4f1ed067f017a048d3a5104788837e8467dd3",
+      "datasets/m2/x.npy": "f068a062c1f1a60ef7ddc336884fb645f929ad23baf49fc0cd44dbfa3e7d8aa4",
+      "datasets/m2/manifest.csv": "a3a460379d3bb1c57a61b9bce2282c75875f3b36d2b632133c924a9b44cc9d5d",
+      "datasets/m3/x.npy": "ce2cb13ed1dc7210f2490915b9a4a038f2054cc0352368109d3b188d5db7563e",
+      "datasets/m3/manifest.csv": "70a6ae2634f2242497ca866117946d10218516eb7e487678e85e772202b05ced",
+      "datasets/m4/x.npy": "7cff50dc3bf059bf1db99f93ec157d7361cc6cb386be7dff870a3de2d2818ec1",
+      "datasets/m4/manifest.csv": "cbc794d7ed279d30fe618ed1f6769337392af97cc90ab66e946531a8e7b6fb1e"
+    },
+    "model_specs": {
+      "m1": {
+        "mu_prior_mean": 0.0,
+        "mu_prior_std": 1.0,
+        "likelihood_std": 1.0
+      },
+      "m2": {
+        "mu_prior_mean": 3.0,
+        "mu_prior_std": 1.0,
+        "likelihood_std": 1.0
+      },
+      "m3": {
+        "mu_prior_mean": 0.0,
+        "mu_prior_std": 1.0,
+        "likelihood_std": 3.0
+      },
+      "m4": {
+        "mu_prior_mean": 0.1,
+        "mu_prior_std": 1.0,
+        "likelihood_std": 1.0
+      }
+    },
+    "model_order": [
+      "m1",
+      "m2",
+      "m3",
+      "m4"
+    ],
+    "model_prior": [
+      0.25,
+      0.25,
+      0.25,
+      0.25
+    ],
+    "signed_error_coverage": 0.9,
+    "implementation_sha256": "4bf1860901c6148a9f26bc2461ac0f53d787c1b66795e8f8db18dabc748f7302",
+    "analytical_implementation_sha256": "87e0232076f521a6b114ee44652ee6b05a0775cb199c88f142af40c2083f3386",
+    "inference_helper_sha256": "e2cd299f9c97259284f1f9f8770a6663389407ab57baa913aad7db58decd52d9"
+  },
+  "output_sha256": {
+    "thresholds": "50935ec0c4929622d66ac9efe0a211653e7283c58b9af8fc1b0f937b65a162fa",
+    "per_dataset_metrics": "3bb65414ff6e4225e1e0a5973783ce039d350928aabbf2307e0121e1ccaab93a",
+    "per_dataset_results": "64b6187a78ad33d1973ed37a1e0f3cbf288df0402d9982d8b5ded3e4e059bd2d"
+  },
+  "num_datasets": 120,
+  "datasets_per_generating_model": {
+    "m1": 30,
+    "m2": 30,
+    "m3": 30,
+    "m4": 30
+  },
+  "dataset_policy": "exact saved indirect benchmark observations reused without regeneration",
+  "gold_standard": "analytical marginal likelihoods with equal model prior",
+  "aggregation": "per generating model, pool all four signed PMP components; central 90% by default",
+  "not_applicable": [
+    "posterior_mmd",
+    "signed_logml_error"
+  ],
+  "not_applicable_reason": "ModelComparisonApproximator outputs model probabilities, not parameter posteriors or absolute marginal likelihoods",
+  "cache_migrations": [
+    {
+      "migrated_at_utc": "2026-09-21T22:42:51.413569+00:00",
+      "reason": "Diagnostic reference sharing changed; all calibration-imported helper ASTs and metric CSV hashes are unchanged.",
+      "previous_inference_helper_sha256": "ebef32acdcd009f1ec81b155b8c3f94c8672796c38be0149b04134abd41af018"
+    }
+  ]
+}

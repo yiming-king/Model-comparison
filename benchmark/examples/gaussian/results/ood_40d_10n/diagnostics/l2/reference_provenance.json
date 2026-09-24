@@ -1,0 +1,61 @@
+{
+  "derived_csv_sha256": {
+    "logml_distance_frame.csv": "74f7279acba064dc04d9dee501e007b599287973e1f278006cbeb06a102de8d4",
+    "pmp_ambiguity_frame.csv": "bbc544ab2dd8d549a576ab777b0ad09a4ef4bc337bfbe504c317368d7a7765ba",
+    "posterior_distance_frame.csv": "75d4154473a143d1effcf66356a48987693e0a70aa90667d437e316e0148d583"
+  },
+  "reference_suite_sha256": "71705cfb4af2e542ede0bd8f50810513335f738ff8677fd67ec1c2b957251dcc",
+  "schema_version": 2,
+  "shared_reference_datasets": {
+    "configuration": {
+      "counts": {
+        "calibration": 2000,
+        "fit": 2000,
+        "validation": 2000
+      },
+      "data_dim": 20,
+      "dtype": "float32",
+      "generator": "gaussian_vectorized_sequential_batches_v1",
+      "model_specs": {
+        "m1": {
+          "likelihood_std": 1.0,
+          "mu_prior_mean": 0.0,
+          "mu_prior_std": 1.0
+        },
+        "m2": {
+          "likelihood_std": 1.0,
+          "mu_prior_mean": 3.0,
+          "mu_prior_std": 1.0
+        },
+        "m3": {
+          "likelihood_std": 3.0,
+          "mu_prior_mean": 0.0,
+          "mu_prior_std": 1.0
+        },
+        "m4": {
+          "likelihood_std": 1.0,
+          "mu_prior_mean": 0.1,
+          "mu_prior_std": 1.0
+        }
+      },
+      "num_obs": 10,
+      "seed": 2025
+    },
+    "directory": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/gaussian/results/diagnostic_reference_datasets/20d_10n/seed_2025_fit_2000_calibration_2000_validation_2000",
+    "file_sha256": {
+      "m1/calibration.npy": "97ff5dce4a2275afc4913159a4f66c9fac01ac883cd3c5c5d7f2d0a38142a696",
+      "m1/fit.npy": "58e17f31f556d3c30655069b64e7c3014722c63573a599ed3d84330e6141d2cf",
+      "m1/validation.npy": "d9ee4048ac6f7a0e4756a821e096d45a9ea9f682b4b839fd7fbaa24df6b8fdbe",
+      "m2/calibration.npy": "c8322db97413cf93e6a17608c3f6cc6375574d684e15f90bad2e96e8f825c055",
+      "m2/fit.npy": "fb76597e5dd0a741c0ff05c965c10a8b9226b1f24d0df19bc954d7b90560385a",
+      "m2/validation.npy": "23abddb1fff36de559458ff63a5fbf56aad4d73779c07edaa4c7f4b20b18511a",
+      "m3/calibration.npy": "0407251cb5c9eefc957c20d0d3b778dd7d17248ec7452fd7dff0709d1ff22fa5",
+      "m3/fit.npy": "4711226fe214ec7d4d9ebcfa909af37bd9f5d4def269219fd6203388da300d28",
+      "m3/validation.npy": "e05b2298ab19987bacba8ee66eb5c56c0c20ca60aadcee4328c657c2ae21d3c3",
+      "m4/calibration.npy": "934c659eea68441d191042e0dc554b5dc8f8541baea83c955ac972b6be84b8a7",
+      "m4/fit.npy": "08db3fdcbdae5d102e4f216d2075e101ea15d16254801d84cae037cca100ca60",
+      "m4/validation.npy": "32cc758722fac049e5f178a50361c0c616659775ecd839ce95dc94561a050b81"
+    },
+    "schema_version": 1
+  }
+}

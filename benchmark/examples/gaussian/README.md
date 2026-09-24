@@ -42,6 +42,116 @@ from their Keras configuration rather than inferred from their filenames:
 Thresholds are therefore specific to `summary_label × generating_model`; they
 are never shared across summary-space sizes.
 
+## Shared raw datasets for diagnostic references
+
+For each candidate model M1–M4, indirect networks and all direct losses use
+the same saved raw datasets for diagnostic reference fitting, reference
+calibration, and density validation. These are three separate splits. Fit
+data estimate the reference mean/covariance, kernel reference, or density;
+calibration data determine the reference median and 5th–95th percentiles;
+validation data check the density fit. The validation split is also fixed and
+shared across methods. No method redraws these splits independently.
+
+The current D=20, N=10 bank is stored under
+`results/diagnostic_reference_datasets/20d_10n/seed_2025_fit_2000_calibration_2000_validation_2000/`.
+Each candidate has `{fit,calibration,validation}.npy`, with a shared
+`manifest.json` recording the bank identity. Each split contains 2,000 datasets
+per candidate. Raw dimensions, observation count, candidate model, split,
+sample counts, and seed identify the bank; summary dimension and direct loss
+do not. The shared entry point is
+`analysis.reference_datasets.ensure_reference_datasets()`.
+
+Every network embeds those shared observations using its own learned summary
+network and fits its own reference distributions in that space. Sharing raw
+inputs does not share embeddings, fitted densities, quantile bounds, or
+surprise labels. Derived diagnostic caches must correspond to both the raw
+bank and the network checkpoint. After changing the bank, recompute those
+caches before redrawing diagnostic figures.
+
+The separate approximation-error benchmark remains 120 raw datasets, 30 per
+candidate, in `calibration_outputs/20d_10n/datasets/`. It is used to calibrate
+approximation-error thresholds and is not an additional batch for the four
+summary diagnostics. The plotted OOD observations remain the existing 600
+datasets. This change does not retrain any inference network.
+
+## Direct model comparison and its own summary diagnostics
+
+`notebooks/direct_cent.ipynb`, `direct_exp.ipynb`, and `direct_logistic.ipynb`
+train separate direct classifiers, each with a learned 12-dimensional summary.
+Their outputs live under `results/direct/direct_{cross_entropy,exponential,logistic}/`.
+`notebooks/pmp_direct_indirect_comparison.ipynb` reads these results and saves
+combined figures under `results/direct/direct_loss_comparison/figures/`.
+
+The comparison still reads observations and indirect S=4D logML from
+`results/ood_80d_10n/datasets/*_logml_pmp.pkl`. These files contain distinct
+indirect inference results and must be retained. Here `80d` denotes the indirect
+summary dimension; the observations have shape `(10, 20)`.
+
+Direct L2, Linf, Kernel, and density diagnostics use each loss's **own direct
+checkpoint embeddings**. The shared raw fit, calibration, and validation
+splits from M1–M4 are transformed by each classifier to fit four model-specific
+reference laws in that classifier's learned space. No indirect reference
+distributions or surprise labels are reused.
+Reference fitting and calibration each use 2,000 datasets per candidate model;
+density flows additionally use 2,000 validation datasets. The reference interval
+is the central 90%, and `rho = (distance - median) / (high - median)`.
+“All high surprise” means all four distances exceed their own upper reference
+bound; lower-tail values retain the existing interpolation convention.
+
+```bash
+KERAS_BACKEND=jax /opt/anaconda3/envs/benchmark2/bin/python \
+  -m benchmark.examples.gaussian.analysis.direct_diagnostics
+```
+
+The comparison notebook calls the same cache-aware entry point before reading
+PMP tables. Checkpoint, input, implementation, and reference-setting fingerprints
+prevent stale diagnostics after retraining; refreshed PMPs come from the same
+checkpoint as the diagnostics. This only fits diagnostic density models and
+does not retrain the direct classifier. Outputs include a long diagnostic CSV,
+reference caches, observed embeddings, and provenance metadata per loss.
+
+Direct PMP **error** thresholds are separate from these summary-space diagnostic
+intervals. `analysis/direct_calibration.py` evaluates each saved direct classifier
+on the exact existing `calibration_outputs/20d_10n/datasets/{m1,m2,m3,m4}/x.npy`
+benchmark (30 datasets per generator). It recomputes analytical PMP from those
+observations and calibrates `direct PMP - analytical PMP`. Following the indirect
+protocol, each generating model pools all four PMP components (120 values) and
+uses the linear-interpolated 5th and 95th percentiles. Thus plot row Mj uses the
+error interval calibrated on generator Mj, pooling its four components; it is
+not a component-j-only error interval.
+
+```bash
+KERAS_BACKEND=jax /opt/anaconda3/envs/benchmark2/bin/python \
+  -m benchmark.examples.gaussian.analysis.direct_calibration
+```
+
+Each loss saves `calibration/{thresholds,per_dataset_metrics,per_dataset_results}.csv`
+and `calibration/metadata.json` below its own `results/direct/direct_<loss>/`.
+The comparison notebook checks these caches and matches the green background
+style of `summary_dimension_comparison_M1_M4_4x4.ipynb` (`#DCEEDC`, alpha 0.70).
+The diagnostic background spans from the smallest loss-specific `rho_low`
+(using its median across datasets) to `rho = 1`: it is the envelope of the
+three reference intervals, not a region jointly normal under all three losses.
+The horizontal PMP-error background shows the intersection of the three loss
+intervals, `[max(low), min(high)]`. If they do not overlap, it shows their
+envelope `[min(low), max(high)]` with alpha 0.25 instead. Loss-specific horizontal
+threshold lines retain their colors, and the vertical `rho = 1` line marks the
+upper diagnostic reference boundary.
+The three direct classifiers do not produce parameter posteriors or absolute
+logML, so posterior-MMD and logML-error thresholds remain properties of the
+corresponding indirect estimators. Summary-space Kernel MMD is a different quantity
+from posterior-sample MMD.
+
+The reused historical benchmark has a known overlap: all 30 M1 observations
+exactly match OOD M1 IDs 0–29; the M2–M4 benchmark observations do not overlap
+the plotted 600 OOD datasets. Reuse preserves the original indirect comparison
+protocol, but the M1 error interval is not independent of those plotted samples.
+
+The redundant 12 L2 `*_processed_80d_10n.pkl` caches were removed after checking
+that their inference fields match retained `*_logml_pmp.pkl` and their diagnostic
+values match retained CSVs. The `*_processed_80d_10n_linf.pkl` caches are retained:
+they contain a different historical inference run, including posterior draws.
+
 Run commands from the repository root with the `benchmark2` environment.
 
 ## 1. Generate calibration data and thresholds
@@ -150,8 +260,11 @@ The computation-only tables are saved in
 `results/ood_20d_10n/inference/{posterior,logml,pmp}.csv`. Full plotting tables
 are saved in `results/ood_20d_10n/diagnostics/l2/`. The notebook
 `notebooks/ood_analysis_l2_20d_10n.ipynb` only loads these cached tables and
-plots posterior, logML, indirect-PMP, and direct-PMP results; it does not load
-networks or rerun inference.
+plots posterior, logML, and indirect-PMP results; it does not load networks or
+rerun inference. Direct PMP diagnostics are shown only in
+`notebooks/pmp_direct_indirect_comparison.ipynb`, using each direct network's
+own summary space. The twelve OOD notebooks no longer plot old direct
+predictions against indirect summary-space diagnostics.
 
 The plotting-only notebooks follow a regular `diagnostic × summary-size` grid:
 

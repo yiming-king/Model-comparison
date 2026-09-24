@@ -33,7 +33,7 @@ from ..config import (
 )
 from ..datasets.calculation import Calculation
 from ..datasets.datasets import GetDatasets
-from ..direct.calculator import softmax_stable
+from scipy.special import softmax as softmax_stable
 from .thresholds import (
     DEFAULT_POSTERIOR_MMD_QUANTILE,
     DEFAULT_SIGNED_ERROR_COVERAGE,

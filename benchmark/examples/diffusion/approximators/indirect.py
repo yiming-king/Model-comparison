@@ -72,7 +72,9 @@ def load_approximator(model: str, config: TrainingConfig = TrainingConfig(), app
     path = get_path(name)
     if not path.exists():
         raise FileNotFoundError(f"Trained approximator not found: {path}")
-    return keras.saving.load_model(path)
+    # Preserve historical DeepSet attention computations when loading old archives.
+    from ...gaussian.approximators.legacy_npe import load_checkpoint
+    return load_checkpoint(path)
 
 
 def save_history(history, model: str, config: TrainingConfig = TrainingConfig(), approximation: str = "NPE"):

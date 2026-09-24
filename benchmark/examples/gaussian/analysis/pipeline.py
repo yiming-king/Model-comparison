@@ -37,9 +37,14 @@ from ..config import (
     discover_network_sets,
 )
 from ..datasets.calculation import Calculation
+from ..approximators.legacy_npe import load_checkpoint
 from ..datasets.datasets import GetDatasets
-from ..direct.calculator import direct_get_probs, indirect_get_probs, softmax_stable
+from scipy.special import softmax as softmax_stable
 from . import summry_diagnostic as diagnostic
+from .reference_datasets import (
+    ReferenceDatasets, ensure_reference_datasets, file_sha256,
+    load_or_fit_model_reference, _write_json as _write_reference_metadata,
+)
 
 
 NONNEGATIVE_Y_MARGIN = 0.1
@@ -105,7 +110,7 @@ def load_approximators(
     network_set: NetworkSet,
 ) -> dict[str, object]:
     return {
-        model: keras.saving.load_model(network_set.paths[model])
+        model: load_checkpoint(network_set.paths[model])
         for model in ASSUMED_MODELS
     }
 
@@ -306,6 +311,8 @@ def compute_ood_inference(
     overwrite: bool = False,
 ) -> dict[str, pd.DataFrame]:
     """Compute NPE/analytical posterior, logML, indirect PMP, and direct PMP."""
+    # Legacy inference helpers are unnecessary for the diagnostics-only stage.
+    from ..direct.calculator import direct_get_probs, indirect_get_probs
     if num_samples <= 1:
         raise ValueError("num_samples must exceed one")
     diagnostic.quiet_bayesflow_progress()
@@ -435,24 +442,40 @@ def load_or_fit_references(
     *,
     overwrite: bool,
     reference_kwargs: dict,
+    shared_reference_data: ReferenceDatasets | None = None,
+    checkpoint_paths: dict[str, Path] | None = None,
 ) -> dict[str, dict[str, dict]]:
-    if path.exists() and not overwrite:
-        references = diagnostic.load_reference_suites(path)
-        if all(
-            metric in references.get(model, {})
-            for model in ASSUMED_MODELS
-            for metric in metrics
-        ):
-            print(f"Reusing reference suite: {path}")
-            return references
-    references = diagnostic.fit_summary_reference_suites(
-        approximators,
-        simulators,
-        assumed_models=ASSUMED_MODELS,
-        metrics=metrics,
-        **reference_kwargs,
-    )
-    diagnostic.save_reference_suites(references, path)
+    """Require persisted shared inputs and content-validated per-network caches.
+
+    ``simulators`` remains a compatibility argument; fresh stochastic simulators
+    are never used. Old bundle pickles without raw-data provenance are not reused.
+    """
+    if shared_reference_data is None or checkpoint_paths is None:
+        raise ValueError("Shared reference datasets and checkpoint paths are required")
+    references, complete_references, model_paths = {}, {}, {}
+    for index, model in enumerate(ASSUMED_MODELS):
+        model_path = path.with_name(f"{path.stem}_{model}.pkl")
+        references[model] = load_or_fit_model_reference(
+            model_path, approximators[model], shared_reference_data, model,
+            checkpoint=checkpoint_paths[model], metrics=metrics, overwrite=overwrite,
+            settings={**reference_kwargs, "seed": int(reference_kwargs.get("seed", 2025)) + index},
+        )
+        # The helper validated the child's complete stored suite before returning
+        # the requested subset. Preserve that suite in the bundle, never old
+        # metrics read from a historical/unverified bundle.
+        child_metadata = json.loads(model_path.with_suffix(".json").read_text())
+        child_identity = child_metadata["identity"]
+        if (child_metadata["sha256"] != file_sha256(model_path)
+                or child_identity["shared_reference_datasets"] != shared_reference_data.identity
+                or child_identity["checkpoint_sha256"] != file_sha256(checkpoint_paths[model])):
+            raise ValueError(f"Reference cache changed after validation: {model_path}")
+        complete_references[model] = diagnostic.load_reference_suites(model_path)
+        model_paths[model] = {"path": str(model_path), "sha256": file_sha256(model_path)}
+    diagnostic.save_reference_suites(complete_references, path)
+    _write_reference_metadata(path.with_suffix(".json"), {
+        "schema_version": 2, "shared_reference_datasets": shared_reference_data.identity,
+        "model_reference_files": model_paths, "sha256": file_sha256(path),
+    })
     print(f"Saved reference suite: {path}")
     return references
 
@@ -1224,27 +1247,25 @@ def main() -> None:
         output_root = result_dir / "diagnostics"
         reference_path = output_root / f"reference_suite_{network_set.network_tag}.pkl"
         approximators = load_approximators(network_set)
-        simulators = {
-            model: make_simulator(
-                MODEL_SPECS[model],
-                network_set.data_dim,
-                network_set.num_obs,
-                args.seed + 10_000 * summary_index + index,
-            )
-            for index, model in enumerate(ASSUMED_MODELS)
-        }
+        shared_data = ensure_reference_datasets(
+            network_set.data_dim, network_set.num_obs, n_fit=args.n_fit,
+            n_calibration=args.n_calibration, n_density_validation=args.n_density_validation,
+            seed=args.seed,
+        )
         references = load_or_fit_references(
             reference_path,
             approximators,
-            simulators,
+            {model: shared_data.simulator(model) for model in ASSUMED_MODELS},
             metrics,
             overwrite=args.overwrite_reference,
+            shared_reference_data=shared_data,
+            checkpoint_paths=network_set.paths,
             reference_kwargs={
                 "n_fit": args.n_fit,
                 "n_calibration": args.n_calibration,
                 "alpha": args.alpha,
                 "n_boot": args.n_boot,
-                "seed": args.seed + 10_000 * summary_index,
+                "seed": args.seed,
                 "density_epochs": args.density_epochs,
                 "density_batch_size": args.density_batch_size,
                 "n_density_validation": args.n_density_validation,
@@ -1258,11 +1279,21 @@ def main() -> None:
             metrics=metrics,
         )
         thresholds = _threshold_lookup(threshold_path, configuration, network_set)
-        posterior_errors = (
-            load_cached_inference_results(result_dir)["posterior"]
-            if paths.posterior.exists()
-            else None
-        )
+        if paths.posterior.exists():
+            posterior_errors = pd.read_csv(paths.posterior)
+        else:
+            cached_posterior_paths = [
+                output_root / metric / "posterior_distance_frame.csv"
+                for metric in dict.fromkeys(("l2", *metrics, "linf", "mmd", "density"))
+            ]
+            cached_posterior_path = next((cached for cached in cached_posterior_paths if cached.exists()), None)
+            if cached_posterior_path is None:
+                raise FileNotFoundError("Cached posterior errors are required to refresh diagnostics without rerunning inference")
+            posterior_errors = pd.read_csv(cached_posterior_path)
+        posterior_errors = posterior_errors[[
+            "source_model", "id", "assumed_model", "posterior_mmd",
+            "posterior_mean_rmse", "n_posterior_samples",
+        ]].copy()
         for metric in metrics:
             metric_output_dir = output_root / metric
             posterior_errors = save_metric_frames(
@@ -1274,6 +1305,14 @@ def main() -> None:
                 posterior_errors,
                 thresholds,
             )
+            _write_reference_metadata(metric_output_dir / "reference_provenance.json", {
+                "schema_version": 2, "shared_reference_datasets": shared_data.identity,
+                "reference_suite_sha256": file_sha256(reference_path),
+                "derived_csv_sha256": {
+                    name: file_sha256(metric_output_dir / name)
+                    for name in ("posterior_distance_frame.csv", "logml_distance_frame.csv", "pmp_ambiguity_frame.csv")
+                },
+            })
             if args.plots:
                 generate_calibrated_plots(metric_output_dir)
 

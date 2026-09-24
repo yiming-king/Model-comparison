@@ -15,8 +15,8 @@ import tensorflow as tf
 from bayesflow.metrics import MaximumMeanDiscrepancy
 from matplotlib.lines import Line2D
 from sklearn.covariance import LedoitWolf
+from scipy.special import softmax
 
-import benchmark.examples.gaussian.direct.calculator as BF
 from benchmark.examples.gaussian.config import (
     ASSUMED_MODELS,
     MODEL_SPECS,
@@ -559,6 +559,8 @@ def compute_model_probabilities(
     sources: tuple[str, ...] = SOURCE_MODELS,
     assumed_models: tuple[str, ...] = ASSUMED_MODELS,
 ) -> dict[str, list[dict]]:
+    import benchmark.examples.gaussian.direct.calculator as BF
+
     for source in sources:
         datasets[source] = BF.direct_get_probs(datasets[source], direct_approximator)
         datasets[source] = BF.indirect_get_probs(datasets[source], assumed_models)
@@ -850,8 +852,8 @@ def collect_pmp_ambiguity_frame(
     n_models = len(assumed_models)
     for source in sources:
         for item in datasets[source]:
-            gold = BF.softmax_stable([item[f"gold_log_marginal_{m}"] for m in assumed_models])
-            npe = BF.softmax_stable([item[f"npe_log_marginal_{m}"] for m in assumed_models])
+            gold = softmax([item[f"gold_log_marginal_{m}"] for m in assumed_models])
+            npe = softmax([item[f"npe_log_marginal_{m}"] for m in assumed_models])
             direct = np.asarray(item["p_direct"], dtype=float)
             direct_ok = len(direct) == n_models
             row = {

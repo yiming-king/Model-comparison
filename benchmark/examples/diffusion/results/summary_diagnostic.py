@@ -465,6 +465,7 @@ def _diagnostics_from_summaries(
             regimes = [distance_regime(d, ref) for d in distances[model]]
         output[f"d_{model}"] = distances[model]
         output[f"rho_{model}"] = distances[model] / ref["high"]
+        output[f"dm_median_{model}"] = ref["median"]
         output[f"dm_low_{model}"] = ref["low"]
         output[f"dm_high_{model}"] = ref["high"]
         output[f"regime_{model}"] = regimes

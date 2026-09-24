@@ -1,0 +1,5 @@
+loss_function,network_tag,generating_model,metric,quantile,lower_quantile,upper_quantile,quantile_method,lower_threshold,threshold,median,degenerate_interval,n_values,num_datasets,aggregation,gold_standard
+exponential,direct_exponential,m1,signed_pmp_error,0.9,0.04999999999999999,0.95,linear,-0.00946546749487497,0.0094654391826686,8.541969079766884e-13,False,120,30,all_four_pmp_components_from_well_specified_datasets,analytical
+exponential,direct_exponential,m2,signed_pmp_error,0.9,0.04999999999999999,0.95,linear,-4.778496447196808e-28,1.2009310674353897e-18,0.0,False,120,30,all_four_pmp_components_from_well_specified_datasets,analytical
+exponential,direct_exponential,m3,signed_pmp_error,0.9,0.04999999999999999,0.95,linear,0.0,1.4262121097716201e-18,7.156215886337071e-31,False,120,30,all_four_pmp_components_from_well_specified_datasets,analytical
+exponential,direct_exponential,m4,signed_pmp_error,0.9,0.04999999999999999,0.95,linear,-0.008599754894118596,0.008599725091796254,8.49748656855942e-13,False,120,30,all_four_pmp_components_from_well_specified_datasets,analytical

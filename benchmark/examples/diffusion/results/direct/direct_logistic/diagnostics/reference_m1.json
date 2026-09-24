@@ -1,0 +1,62 @@
+{
+  "created_at_utc": "2026-09-22T10:43:18.045565+00:00",
+  "identity": {
+    "schema_version": 2,
+    "summary_owner": "direct_logistic",
+    "assumed_model": "m1",
+    "checkpoint": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/approximators/trained/direct/direct_logistic.keras",
+    "checkpoint_sha256": "81bd6d03f69abde528ebc21f45b0a21ed5d520af1c4ef483c27f3bd67bbf6bfb",
+    "shared_reference_data": {
+      "bank_directory": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/reference_datasets/diagnostics/seed2025_fit2000_cal2000_validation2000",
+      "generation": {
+        "schema_version": 1,
+        "seed": 2025,
+        "counts": {
+          "fit": 2000,
+          "calibration": 2000,
+          "validation": 2000
+        },
+        "models": [
+          "m0",
+          "m1",
+          "m2",
+          "m3"
+        ],
+        "num_obs": 384,
+        "simulator_sha256": "c72c12e69d39c5e2ed688ed66a60d385ad5446db01a7be01783689476ada8148",
+        "conditions_sha256": "8d801f4e3542d6c5c495de3d35f7215550eadb9a2394d1695b280d5bc9dfe492",
+        "protocol": "per-model MT19937 seed+model_index; fit then calibration; validation reseeded at seed+1000000+model_index",
+        "dtype": "float32"
+      },
+      "arrays": {
+        "m1": {
+          "fit": "3a1b497ec9acf9d1aefba903df81cb428bfc80dc01e244ea771f5272b014a609",
+          "calibration": "a882d25e43a2e5a2eb3e56e2a8d64ee0ee9f3eee61530d764e5a75b1167e226b",
+          "validation": "c875e546120e77ed354b48c584ffa9989a6a80648e2a69ef6d95570a00749eae"
+        }
+      }
+    },
+    "settings": {
+      "n_fit": 2000,
+      "n_calibration": 2000,
+      "alpha": 0.1,
+      "n_boot": 1000,
+      "seed": 2025,
+      "density_epochs": 250,
+      "density_batch_size": 128,
+      "n_density_validation": 2000
+    },
+    "metrics": [
+      "l2",
+      "linf",
+      "density",
+      "mmd"
+    ],
+    "effective_seed": 2026,
+    "reference_implementation_sha256": "5721e1f4ee93a833f3d2cb7e93f011df0e2da186005e2be2952cff6fa434fcc0",
+    "shared_fitting_implementation_sha256": "fcbd59aec9b892bd761e40f932e34308645567e7a9e20097aa44c1ec73cb4800",
+    "checkpoint_loader_sha256": "7e0f0b59f21cde3281ca5ac28c942bd0249ef3fe7e70558e189a2487e8221766"
+  },
+  "sha256": "5a99a158f29aa36499bbd6b6efc4d871afd67a2a28f5976b891da607ce268f54",
+  "migration": null
+}
