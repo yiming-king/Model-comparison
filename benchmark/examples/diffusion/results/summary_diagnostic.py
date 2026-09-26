@@ -122,7 +122,7 @@ def squared_mmd_rbf_two_sample(
     max_samples: int = 512,
     seed: int = 2025,
 ) -> float:
-    
+
     rng = np.random.default_rng(seed)
     x = np.asarray(x, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)

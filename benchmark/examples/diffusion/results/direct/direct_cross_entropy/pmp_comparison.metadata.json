@@ -1,0 +1,24 @@
+{
+  "created_at_utc": "2026-09-25T14:51:17.510392+00:00",
+  "loss_function": "cross_entropy",
+  "num_datasets": 136,
+  "direct_checkpoint": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/approximators/trained/direct/direct_cent.keras",
+  "checkpoint_sha256": "179a265b9efe75d89bd4ff856d2b37de0510a66c517f0a6e493252049ca77448",
+  "direct_summary_dimension": 12,
+  "model_order": [
+    "m0",
+    "m1",
+    "m2",
+    "m3"
+  ],
+  "model_prior": [
+    0.25,
+    0.25,
+    0.25,
+    0.25
+  ],
+  "indirect_configuration": "S4D",
+  "indirect_source": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/results/NPE_results/npe_S4D_all_observed_results_gold.csv",
+  "gold_source": "shared Stan bridge-sampling PMP in the indirect observed cache",
+  "diagnostic_source": "this direct checkpoint's own learned summaries"
+}

@@ -12,7 +12,6 @@ from pathlib import Path
 os.environ.setdefault("KERAS_BACKEND", "tensorflow")
 os.environ.setdefault("MPLCONFIGDIR", "/private/tmp/matplotlib")
 
-import keras
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -29,6 +28,7 @@ from ..config import (
     NETWORK_DIR,
     NetworkSet,
     configuration_tag,
+    calibration_output_dir,
     discover_network_sets,
 )
 from ..datasets.calculation import Calculation
@@ -103,7 +103,10 @@ def generate_datasets(
         x_path = model_dir / "x.npy"
         mu_path = model_dir / "mu.npy"
         manifest_path = model_dir / "manifest.csv"
-        if all(path.exists() for path in (x_path, mu_path, manifest_path)) and not overwrite:
+        if (
+            all(path.exists() for path in (x_path, mu_path, manifest_path))
+            and not overwrite
+        ):
             shape = np.load(x_path, mmap_mode="r").shape
             expected = (num_datasets, num_obs, num_dims)
             if shape != expected:
@@ -154,8 +157,10 @@ def _load_datasets(paths: CalibrationPaths, model: str) -> list[dict]:
 def load_approximators(
     network_set: NetworkSet,
 ) -> dict[str, object]:
+    from ..approximators.legacy_npe import load_checkpoint
+
     return {
-        model: keras.saving.load_model(network_set.paths[model])
+        model: load_checkpoint(network_set.paths[model])
         for model in ASSUMED_MODELS
     }
 
@@ -285,9 +290,7 @@ def compute_metrics(
         approximators = load_approximators(network_set)
         posterior_mmd = MaximumMeanDiscrepancy(kernel="gaussian")
         for generating_index, generating_model in enumerate(ASSUMED_MODELS):
-            datasets = [
-                dict(item) for item in analytical_references[generating_model]
-            ]
+            datasets = [dict(item) for item in analytical_references[generating_model]]
             calculations = _calculations(
                 approximators,
                 num_dims=num_dims,
@@ -320,9 +323,7 @@ def compute_metrics(
                 gold_pmp = softmax_stable(gold_logml)
                 npe_pmp = softmax_stable(npe_logml)
                 if save_posterior_draws:
-                    _save_matching_npe_draw(
-                        paths, network_set, generating_model, item
-                    )
+                    _save_matching_npe_draw(paths, network_set, generating_model, item)
 
                 for candidate_index, candidate_model in enumerate(ASSUMED_MODELS):
                     matching = candidate_model == generating_model
@@ -379,9 +380,7 @@ def compute_metrics(
                             "absolute_pmp_error": abs(signed_pmp_error),
                         }
                     )
-            model_frame = pd.DataFrame(
-                rows[-len(datasets) * len(ASSUMED_MODELS) :]
-            )
+            model_frame = pd.DataFrame(rows[-len(datasets) * len(ASSUMED_MODELS) :])
             cache = (
                 paths.metric_config(network_set)
                 / generating_model
@@ -421,7 +420,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("stage", choices=("generate", "metrics", "thresholds", "all"))
     parser.add_argument("--num-dims", type=int, default=20)
     parser.add_argument("--num-obs", type=int, default=10)
-    parser.add_argument("--num-datasets", type=int, default=30)
+    parser.add_argument("--num-datasets", type=int, default=100)
     parser.add_argument("--num-posterior-samples", type=int, default=1000)
     parser.add_argument(
         "--logml-method", choices=("log_mean_exp",), default="log_mean_exp"
@@ -475,7 +474,7 @@ def main() -> None:
             "dimensions. Inspect --network-dir, --num-dims, --num-obs, and "
             "--summary-dims."
         )
-    paths = CalibrationPaths(args.calibration_root / configuration)
+    paths = CalibrationPaths(calibration_output_dir(configuration, args.calibration_root))
     paths.root.mkdir(parents=True, exist_ok=True)
     metadata = {
         "configuration": configuration,

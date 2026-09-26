@@ -25,22 +25,26 @@ SCORING_RULES = [
 
 NUM_OBS_VALUES = [10, 100]
 
-def get_name(scoring_rule: str,config):
-    return (f"direct_{scoring_rule}"f"_{config.num_obs}n")
 
-def get_paths(scoring_rule:str,config):
-    name = get_name(scoring_rule,config)
+def get_name(scoring_rule: str, config):
+    return f"direct_{scoring_rule}_{config.num_obs}n"
+
+
+def get_paths(scoring_rule: str, config):
+    name = get_name(scoring_rule, config)
     network_path = NETWORK_DIR / f"{name}.keras"
     history_path = NETWORK_DIR / "history" / f"{name}.json"
     return network_path, history_path
 
+
 def get_simulators(config):
-    return [get_simulator(model=model, config=config, seed=config.seed + i)
-            for i, model in enumerate(MODELS)]
+    return [
+        get_simulator(model=model, config=config, seed=config.seed + i)
+        for i, model in enumerate(MODELS)
+    ]
 
 
-
-def build_workflow(scoring_rule:str, config):
+def build_workflow(scoring_rule: str, config):
     workflow = bf.ModelComparisonWorkflow(
         simulator=get_simulators(config),
         summary_variables="x",
@@ -50,23 +54,33 @@ def build_workflow(scoring_rule:str, config):
     )
     return workflow
 
-def train_one(scoring_rule,config,save = True):
+
+def train_one(scoring_rule, config, save=True):
     print(
         f"\nTraining direct model comparison: "
         f"scoring_rule={scoring_rule}, "
         f"N={config.num_obs}\n"
     )
-    workflow = build_workflow(scoring_rule, config,)
+    workflow = build_workflow(
+        scoring_rule,
+        config,
+    )
     history = workflow.fit_online(
         epochs=config.epochs,
         batch_size=config.batch_size,
         num_batches_per_epoch=config.num_batches,
-        validation_data = 1000,
+        validation_data=1000,
     )
     if save:
-        network_path, history_path = get_paths(scoring_rule,config)
-        network_path.parent.mkdir(parents=True, exist_ok=True,)
-        history_path.parent.mkdir(parents=True, exist_ok=True,)
+        network_path, history_path = get_paths(scoring_rule, config)
+        network_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+        history_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
         workflow.approximator.save(network_path)
         history_data = {
             "scoring_rule": scoring_rule,
@@ -77,10 +91,19 @@ def train_one(scoring_rule,config,save = True):
             },
         }
 
-        with open(history_path, "w",encoding="utf-8",) as f:
-            json.dump(history_data, f, indent=2,)
+        with open(
+            history_path,
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump(
+                history_data,
+                f,
+                indent=2,
+            )
 
     return workflow, history
+
 
 def train_all():
     for scoring_rule, num_obs in itertools.product(SCORING_RULES, NUM_OBS_VALUES):
@@ -94,6 +117,8 @@ def train_all():
             learning_rate=1e-4,
             seed=2025,
         )
-        train_one(scoring_rule,config,save=True)
+        train_one(scoring_rule, config, save=True)
+
+
 if __name__ == "__main__":
     train_all()

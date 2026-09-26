@@ -32,6 +32,8 @@ SUMMARY_COLORS = {
     "S=2D": "#E69F00",
     "S=4D": "#CC79A7",
 }
+
+
 def _validate_selection(
     diagnostics: tuple[str, ...],
     error_metrics: tuple[str, ...],
@@ -49,32 +51,28 @@ def _validate_selection(
     if not diagnostics or not error_metrics or not models:
         raise ValueError("Diagnostics, error metrics, and models cannot be empty")
 
+
 def _cache_path(
     diagnostic: str,
     network_tag: str,
     error_metric: str,
-) -> tuple[Path, bool]:
-    """Return the best available cache and whether it uses legacy rho."""
+) -> Path:
+    """Return the best available diagnostic cache."""
     result_root = RESULT_DIR / f"ood_{network_tag}"
-    modern = (
-        result_root
-        / "diagnostics"
-        / diagnostic
-        / ERROR_CACHE_NAMES[error_metric]
-    )
+    modern = result_root / "diagnostics" / diagnostic / ERROR_CACHE_NAMES[error_metric]
     if modern.exists():
-        return modern, False
+        return modern
     stem = ERROR_CACHE_NAMES[error_metric].removesuffix(".csv")
     if diagnostic == "l2":
-        return result_root / f"{stem}_{network_tag}.csv", True
+        return result_root / f"{stem}_{network_tag}.csv"
     if diagnostic == "linf":
         legacy_root = RESULT_DIR / f"ood_{network_tag}_inf"
-        return legacy_root / f"{stem}_{network_tag}_linf.csv", True
-    return modern, False
+        return legacy_root / f"{stem}_{network_tag}_linf.csv"
+    return modern
 
 
 def _calibration_thresholds() -> pd.DataFrame:
-    path = CALIBRATION_ROOT / "20d_10n" / "thresholds.csv"
+    path = CALIBRATION_ROOT / "thresholds.csv"
     if not path.exists():
         raise FileNotFoundError(f"Missing Gaussian calibration thresholds: {path}")
     thresholds = pd.read_csv(path)
@@ -99,9 +97,7 @@ def _calibration_thresholds() -> pd.DataFrame:
     )
     thresholds["error_metric"] = thresholds["metric"].map(calibration_to_error)
     thresholds = thresholds.drop(columns="metric")
-    if thresholds.duplicated(
-        ["network_tag", "assumed_model", "error_metric"]
-    ).any():
+    if thresholds.duplicated(["network_tag", "assumed_model", "error_metric"]).any():
         raise ValueError("Gaussian calibration thresholds are not unique")
     return thresholds
 
@@ -115,7 +111,6 @@ def _long_error_frame(
         columns = common + [
             "assumed_model",
             "d_M",
-            "dm_median",
             "dm_low",
             "dm_high",
             "posterior_mmd",
@@ -131,17 +126,15 @@ def _long_error_frame(
         columns = common + [
             "assumed_model",
             "d_M",
-            "dm_median",
             "dm_low",
             "dm_high",
             "signed_logml_error",
         ]
         available = [column for column in columns if column in frame]
         output = frame[available].copy()
-        output["error_value"] = (
-            pd.to_numeric(output.pop("signed_logml_error"), errors="coerce")
-            / np.log(10.0)
-        )
+        output["error_value"] = pd.to_numeric(
+            output.pop("signed_logml_error"), errors="coerce"
+        ) / np.log(10.0)
         return output
 
     rows = []
@@ -166,11 +159,6 @@ def _long_error_frame(
                     ],
                     "assumed_model": model,
                     "d_M": frame[f"d_{model}"],
-                    "dm_median": (
-                        frame[f"dm_median_{model}"]
-                        if f"dm_median_{model}" in frame
-                        else 0.0
-                    ),
                     "dm_low": frame[f"dm_low_{model}"],
                     "dm_high": frame[f"dm_high_{model}"],
                     "error_value": frame[f"signed_pmp_error_npe_{model}"],
@@ -214,9 +202,7 @@ def load_comparison_data(
     for diagnostic in diagnostics:
         for summary, network_tag in summary_specs:
             for error_metric in error_metrics:
-                path, legacy_rho = _cache_path(
-                    diagnostic, network_tag, error_metric
-                )
+                path = _cache_path(diagnostic, network_tag, error_metric)
                 if not path.exists():
                     missing_paths.append(str(path))
                     continue
@@ -236,26 +222,17 @@ def load_comparison_data(
                 if absent:
                     raise ValueError(f"{path} is missing columns: {absent}")
 
-                # Legacy L2/Linf notebooks used rho=d/d_high. Force the same
-                # zero center for all three legacy summary sizes.
-                median = (
-                    np.zeros(len(frame), dtype=float)
-                    if legacy_rho
-                    else pd.to_numeric(frame["dm_median"], errors="coerce")
-                )
+                # Recalculate rho from raw distances so cached values cannot drift.
                 high = pd.to_numeric(frame["dm_high"], errors="coerce")
-                denominator = high - median
-                if denominator.le(0.0).any() or (~np.isfinite(denominator)).any():
+                if high.le(0.0).any() or (~np.isfinite(high)).any():
                     raise ValueError(f"Invalid diagnostic reference interval in {path}")
                 frame = frame.assign(
                     diagnostic=diagnostic,
                     summary=summary,
                     network_tag=network_tag,
                     error_metric=error_metric,
-                    rho=(pd.to_numeric(frame["d_M"], errors="coerce") - median)
-                    / denominator,
-                    rho_low=(pd.to_numeric(frame["dm_low"], errors="coerce") - median)
-                    / denominator,
+                    rho=pd.to_numeric(frame["d_M"], errors="coerce") / high,
+                    rho_low=pd.to_numeric(frame["dm_low"], errors="coerce") / high,
                 )
                 frame["well_specified"] = frame["source_model"].eq(
                     frame["assumed_model"]
@@ -279,24 +256,21 @@ def load_comparison_data(
             data[threshold_columns].isna().any(axis=1),
             ["network_tag", "assumed_model", "error_metric"],
         ].drop_duplicates()
-        raise ValueError("Missing error thresholds for:\n" + missing.to_string(index=False))
+        raise ValueError(
+            "Missing error thresholds for:\n" + missing.to_string(index=False)
+        )
 
     logml = data["error_metric"].eq("log10_logml_error")
-    data.loc[logml, threshold_columns] = (
-        data.loc[logml, threshold_columns] / np.log(10.0)
+    data.loc[logml, threshold_columns] = data.loc[logml, threshold_columns] / np.log(
+        10.0
     )
     data["normalized_error_value"] = _normalize_error_values(data)
     scale = _normalization_scale(data)
-    data["degenerate_error_threshold"] = (
-        data["error_lower_threshold"].eq(0.0)
-        & data["error_upper_threshold"].eq(0.0)
-    )
-    data["normalized_error_lower_threshold"] = (
-        data["error_lower_threshold"] / scale
-    )
-    data["normalized_error_upper_threshold"] = (
-        data["error_upper_threshold"] / scale
-    )
+    data["degenerate_error_threshold"] = data["error_lower_threshold"].eq(0.0) & data[
+        "error_upper_threshold"
+    ].eq(0.0)
+    data["normalized_error_lower_threshold"] = data["error_lower_threshold"] / scale
+    data["normalized_error_upper_threshold"] = data["error_upper_threshold"] / scale
     data["summary"] = pd.Categorical(
         data["summary"],
         categories=[label for label, _ in summary_specs],

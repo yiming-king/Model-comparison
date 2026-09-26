@@ -2,7 +2,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from benchmark.examples.diffusion.calibration import pipeline, thresholds as threshold_module
+from benchmark.examples.diffusion.calibration import (
+    pipeline,
+    thresholds as threshold_module,
+)
 from benchmark.examples.diffusion.calibration.thresholds import calculate_thresholds
 from benchmark.examples.diffusion.config import MODEL_LABELS, TrainingConfig
 from benchmark.examples.diffusion.results.summary_dimension_comparison import (
@@ -61,8 +64,11 @@ def test_calibration_variant_routes_checkpoints_and_thresholds_together(variant)
 def test_calibration_explicit_roots_and_legacy_training_flags_are_unambiguous(tmp_path):
     args = pipeline._parse_args(
         [
-            "all", "--training-settings", "without_mmd",
-            "--without-mmd-run-suffix", "noMMD_rerun1",
+            "all",
+            "--training-settings",
+            "without_mmd",
+            "--without-mmd-run-suffix",
+            "noMMD_rerun1",
         ]
     )
     assert args.variant == "noMMD_rerun1"
@@ -72,8 +78,16 @@ def test_calibration_explicit_roots_and_legacy_training_flags_are_unambiguous(tm
     output = tmp_path / "results"
     args = pipeline._parse_args(
         [
-            "all", "--reference-root", str(reference), "--output-root", str(output),
-            "--training-settings", "with_mmd", "without_mmd", "--k", "7",
+            "all",
+            "--reference-root",
+            str(reference),
+            "--output-root",
+            str(output),
+            "--training-settings",
+            "with_mmd",
+            "without_mmd",
+            "--k",
+            "7",
         ]
     )
     paths = pipeline.CalibrationPaths(args.output_root, args.reference_root)
@@ -81,9 +95,12 @@ def test_calibration_explicit_roots_and_legacy_training_flags_are_unambiguous(tm
     assert paths.datasets == reference / "datasets"
     assert paths.manifest == reference / "dataset_manifest.csv"
     assert paths.per_dataset_metrics == output / "per_dataset_metrics.csv"
-    assert threshold_module._parse_args(
-        ["--calibration-root", str(output)]
-    ).calibration_root == output
+    assert (
+        threshold_module._parse_args(
+            ["--calibration-root", str(output)]
+        ).calibration_root
+        == output
+    )
     with pytest.raises(SystemExit):
         pipeline._parse_args(
             ["metrics", "--variant", "withMMD", "--training-settings", "without_mmd"]
@@ -94,7 +111,9 @@ def test_calibration_explicit_roots_and_legacy_training_flags_are_unambiguous(tm
         )
 
 
-def test_generate_default_100_datasets_is_deterministic_and_protects_cache(tmp_path, monkeypatch):
+def test_generate_default_100_datasets_is_deterministic_and_protects_cache(
+    tmp_path, monkeypatch
+):
     from benchmark.examples.diffusion import simulators
 
     class SmallSimulator:
@@ -114,7 +133,9 @@ def test_generate_default_100_datasets_is_deterministic_and_protects_cache(tmp_p
     args = pipeline._parse_args(["generate"])
     paths = pipeline.CalibrationPaths(tmp_path / "results", tmp_path / "reference")
     kwargs = {
-        "models": list(pipeline.MODELS), "k": args.k, "base_seed": args.base_seed,
+        "models": list(pipeline.MODELS),
+        "k": args.k,
+        "base_seed": args.base_seed,
     }
     manifest = pipeline.generate_datasets(paths, **kwargs, overwrite=False)
     assert len(manifest) == 400
@@ -124,8 +145,13 @@ def test_generate_default_100_datasets_is_deterministic_and_protects_cache(tmp_p
     assert manifest["dataset_seed"].nunique() == 400
     expected_ids = [f"s{index:03d}" for index in range(100)]
     for model in pipeline.MODELS:
-        assert sorted(path.stem for path in (paths.datasets / model).glob("s*.json")) == expected_ids
-        assert manifest.loc[manifest["generating_model"].eq(model), "dataset_seed"].tolist() == [
+        assert (
+            sorted(path.stem for path in (paths.datasets / model).glob("s*.json"))
+            == expected_ids
+        )
+        assert manifest.loc[
+            manifest["generating_model"].eq(model), "dataset_seed"
+        ].tolist() == [
             pipeline.dataset_seed(args.base_seed, model, index) for index in range(100)
         ]
     sample_path = paths.datasets / "m0" / "s099.json"
@@ -141,13 +167,24 @@ def test_generate_default_100_datasets_is_deterministic_and_protects_cache(tmp_p
     assert not paths.root.exists()
 
 
-def test_calibration_fit_resume_requires_used_draws_and_all_candidate_diagnostics(tmp_path):
+def test_calibration_fit_resume_requires_used_draws_and_all_candidate_diagnostics(
+    tmp_path,
+):
     diagnostic = {
-        "id": "s000", "mcmc_seed": 2025, "mcmc_elapsed_seconds": 1.0,
-        "bridge_elapsed_seconds": 1.0, "fit_elapsed_seconds": 2.0,
-        "max_rhat": 1.2, "min_n_eff": 100, "min_n_eff_ratio": 0.5,
-        "num_chains": 4, "num_postwarmup_draws": 2048, "num_divergent": 0,
-        "num_max_treedepth": 0, "min_ebfmi": 0.5, "converged": False,
+        "id": "s000",
+        "mcmc_seed": 2025,
+        "mcmc_elapsed_seconds": 1.0,
+        "bridge_elapsed_seconds": 1.0,
+        "fit_elapsed_seconds": 2.0,
+        "max_rhat": 1.2,
+        "min_n_eff": 100,
+        "min_n_eff_ratio": 0.5,
+        "num_chains": 4,
+        "num_postwarmup_draws": 2048,
+        "num_divergent": 0,
+        "num_max_treedepth": 0,
+        "min_ebfmi": 0.5,
+        "converged": False,
     }
     pd.DataFrame([{"id": "s000", "estimate": 0.0, "sd": 0.1}]).to_csv(
         tmp_path / "bridgesampling.csv", index=False
@@ -158,14 +195,20 @@ def test_calibration_fit_resume_requires_used_draws_and_all_candidate_diagnostic
     assert not pipeline._fit_is_complete(tmp_path, {"s000"})
     draws = tmp_path / "posterior_draws"
     draws.mkdir()
-    (draws / "s000.csv").write_text("parameter\n" + "1\n" * pipeline.GOLD_POSTERIOR_DRAWS)
+    (draws / "s000.csv").write_text(
+        "parameter\n" + "1\n" * pipeline.GOLD_POSTERIOR_DRAWS
+    )
     assert pipeline._fit_is_complete(tmp_path, {"s000"})
     assert not (tmp_path / "parameter_diagnostics").exists()
-    assert not pipeline._fit_is_complete(tmp_path, {"s000", "s001"}, require_posterior_draws=False)
-    pd.DataFrame([{key: value for key, value in diagnostic.items() if key != "converged"}]).to_csv(
-        diagnostic_path, index=False
+    assert not pipeline._fit_is_complete(
+        tmp_path, {"s000", "s001"}, require_posterior_draws=False
     )
-    assert not pipeline._fit_is_complete(tmp_path, {"s000"}, require_posterior_draws=False)
+    pd.DataFrame(
+        [{key: value for key, value in diagnostic.items() if key != "converged"}]
+    ).to_csv(diagnostic_path, index=False)
+    assert not pipeline._fit_is_complete(
+        tmp_path, {"s000"}, require_posterior_draws=False
+    )
 
 
 def test_model_priors_are_used_in_pmp():
@@ -182,9 +225,7 @@ def test_model_labels_match_zero_based_model_codes():
 def test_requested_rho_normalization_uses_d_over_d_high():
     normalized = _normalize_distance(
         np.array([-2.0, 2.0, 4.0]),
-        median=1.0,
         high=4.0,
-        method="upper_threshold",
     )
     np.testing.assert_allclose(normalized, [-0.5, 0.5, 1.0])
 

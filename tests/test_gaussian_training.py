@@ -127,8 +127,7 @@ def test_explicit_epochs_and_run_suffix_are_respected(tmp_path):
     config = TrainingConfig.from_preset("80d_10n", epochs=3, run_suffix="trial")
     assert [config.epochs_for(model) for model in MODELS] == [3, 3, 3, 3]
     assert (
-        model_path("m1", config, tmp_path).name
-        == "m1_s_80d_10n_bf_default_trial.keras"
+        model_path("m1", config, tmp_path).name == "m1_s_80d_10n_bf_default_trial.keras"
     )
 
 
@@ -252,8 +251,7 @@ def test_summary_mmd_is_opt_in_and_uses_a_separate_archive(indirect, tmp_path):
         == "normal"
     )
     assert (
-        model_path("m1", config, tmp_path).name
-        == "m1_s_20d_10n_bf_default_mmd.keras"
+        model_path("m1", config, tmp_path).name == "m1_s_20d_10n_bf_default_mmd.keras"
     )
     assert model_path("m1", config, tmp_path) != model_path(
         "m1", TrainingConfig(), tmp_path

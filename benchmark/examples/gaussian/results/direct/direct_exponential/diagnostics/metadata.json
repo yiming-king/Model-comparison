@@ -1,7 +1,7 @@
 {
-  "created_at_utc": "2026-09-23T13:09:35.184944+00:00",
+  "created_at_utc": "2026-09-24T12:57:59.009006+00:00",
   "identity": {
-    "schema_version": 1,
+    "schema_version": 3,
     "summary_owner": "direct_exponential",
     "checkpoint": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/gaussian/networks/direct_exponential.keras",
     "checkpoint_sha256": "89e9b9f170a257f478d0be8bb20e797f184a9e33516249f340ab7ed6cfe4ecdc",
@@ -40,8 +40,62 @@
       "density_batch_size": 128,
       "n_density_validation": 2000
     },
-    "implementation_sha256": "e2cd299f9c97259284f1f9f8770a6663389407ab57baa913aad7db58decd52d9",
-    "diagnostic_implementation_sha256": "545ad3f33327e04f363e6e5c2f3af4b6b26ec6e3199302efd426f479c2c24351",
+    "pooling": "uniform balanced model indices; n_fit, n_calibration, n_density_validation are totals",
+    "shared_reference_datasets": {
+      "directory": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/gaussian/results/diagnostic_reference_datasets/20d_10n/seed_2025_fit_500_calibration_500_validation_500",
+      "configuration": {
+        "counts": {
+          "calibration": 500,
+          "fit": 500,
+          "validation": 500
+        },
+        "data_dim": 20,
+        "dtype": "float32",
+        "generator": "gaussian_vectorized_sequential_batches_v1",
+        "model_specs": {
+          "m1": {
+            "likelihood_std": 1.0,
+            "mu_prior_mean": 0.0,
+            "mu_prior_std": 1.0
+          },
+          "m2": {
+            "likelihood_std": 1.0,
+            "mu_prior_mean": 3.0,
+            "mu_prior_std": 1.0
+          },
+          "m3": {
+            "likelihood_std": 3.0,
+            "mu_prior_mean": 0.0,
+            "mu_prior_std": 1.0
+          },
+          "m4": {
+            "likelihood_std": 1.0,
+            "mu_prior_mean": 0.1,
+            "mu_prior_std": 1.0
+          }
+        },
+        "num_obs": 10,
+        "seed": 2025
+      },
+      "file_sha256": {
+        "m1/calibration.npy": "2cf684f0028b7464d235d96d21e2109b5f5d68bb018e3254dad19f1fa8ecfe8f",
+        "m1/fit.npy": "f8a15d9ef316b766eaeb2df91f04adde35c01a89750cfa29b0fcfa76380c59f2",
+        "m1/validation.npy": "0a8418a7fee226052380eac695628b4b3f4afe5c18740bdb5a380303aa6ff6bc",
+        "m2/calibration.npy": "8578e6754a7212098c471017066f7f710245382e3acf710bb7f8d2fea7061588",
+        "m2/fit.npy": "d62bf904f523eeb34447e7f74c88cf4409cf0b859813cd4a0aaa9aa1091c2239",
+        "m2/validation.npy": "9a1d89093ad13afa652d1c1db801fb112cb750cded75b842c1d8b2cea6911d68",
+        "m3/calibration.npy": "9a8b842101f8ef3c6c9de06224adef2ef4a74b2e07ececc465d494e19316f325",
+        "m3/fit.npy": "539fb8979281910ebe452008d575219b9874393139e249d70541fd612badd5ea",
+        "m3/validation.npy": "d754d5b0348d41bf647e4faad512bedfe446c936eeb0da39682feef266115a9e",
+        "m4/calibration.npy": "7af03d513baa351f3c4cc773483716ddcdb170e9107a56c48286d87b0621c050",
+        "m4/fit.npy": "152261a98490c7ccc4412f73a19a48535a0a2cf7173c3fe6410f3cac95dde6ee",
+        "m4/validation.npy": "68aa76f0c28a7c0b58282bdf386d2e178499b183b190ccc8bf56458760e293c0"
+      },
+      "schema_version": 1
+    },
+    "reference_dataset_implementation_sha256": "ec793d366b3c0b5173773008f351c96814209c1eaf51693b53baa6d810859378",
+    "implementation_sha256": "ee59e02fa73cbc75a3d0c929ff68a50559bb79077c2876372237cf682bb0c606",
+    "diagnostic_implementation_sha256": "0b6e2656ede2ed6cc555342eb7833c5c7a7f1d2fe1e9ccdcf6e3b5a933b279bb",
     "dataset_directory": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/gaussian/results/ood_80d_10n/datasets",
     "input_sha256": {
       "m1_logml_pmp.pkl": "4a546434eb4a934923f9b604393b9e24b25450ac179e00ba30e78d53b0826511",
@@ -58,40 +112,17 @@
       "m12_logml_pmp.pkl": "609f28a15fca0ed6a71aca260195976811ea5d7899a73e7b82ec8e2d5f404b89"
     }
   },
-  "diagnostic_sha256": "8881b6ffda7465d91262cdbab39504333af91ed3998675b4fa99885c73b71968",
+  "diagnostic_sha256": "aa8d7e353f2cd9ea2825dfe4f20b8a2de589b5cd7c372e3d095cf9bacb337744",
   "comparison_sha256": "6066a35c708cef75688488e10a753ae5a73669ae60ec919aac40a5da7e8133fe",
   "num_datasets": 600,
-  "diagnostic_rows": 9600,
-  "classification": "all high surprise iff all four candidate distances exceed their own upper reference quantile",
-  "normalization": "rho=(distance-reference_median)/(reference_high-reference_median)",
+  "diagnostic_rows": 2400,
+  "normalization": "rho=distance/reference_high",
+  "pooled_reference_sha256": "9eaeeb6d82b6027c207131713a9bad523219e120d8807f1997252b307c2b1aaf",
   "density_validation": {
-    "m1": {
-      "density_validation_samples": 2000,
-      "density_validation_n_simulator": 2000,
-      "density_validation_n_flow": 2000,
-      "density_validation_mmd2": 0.002054001524733673,
-      "density_validation_mmd": 0.04532109359595897
-    },
-    "m2": {
-      "density_validation_samples": 2000,
-      "density_validation_n_simulator": 2000,
-      "density_validation_n_flow": 2000,
-      "density_validation_mmd2": 0.0018091192969094116,
-      "density_validation_mmd": 0.04253374303902035
-    },
-    "m3": {
-      "density_validation_samples": 2000,
-      "density_validation_n_simulator": 2000,
-      "density_validation_n_flow": 2000,
-      "density_validation_mmd2": 0.0010274416263666986,
-      "density_validation_mmd": 0.03205373030345608
-    },
-    "m4": {
-      "density_validation_samples": 2000,
-      "density_validation_n_simulator": 2000,
-      "density_validation_n_flow": 2000,
-      "density_validation_mmd2": 0.0006101300615988237,
-      "density_validation_mmd": 0.024700810950226384
-    }
+    "density_validation_samples": 2000,
+    "density_validation_n_simulator": 2000,
+    "density_validation_n_flow": 2000,
+    "density_validation_mmd2": 0.00040973033860414176,
+    "density_validation_mmd": 0.020241796822519035
   }
 }

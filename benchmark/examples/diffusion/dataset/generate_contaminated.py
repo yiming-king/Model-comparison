@@ -20,7 +20,13 @@ SOURCE_MODEL = "m3"
 BASE_DIR = Path(__file__).resolve().parent / "json"
 
 
-def _replace_rt(rt: np.ndarray, conditions: np.ndarray, mask: np.ndarray, mode: str, rng: np.random.Generator) -> None:
+def _replace_rt(
+    rt: np.ndarray,
+    conditions: np.ndarray,
+    mask: np.ndarray,
+    mode: str,
+    rng: np.random.Generator,
+) -> None:
     for condition in np.unique(conditions):
         for sign in (-1.0, 1.0):
             group = (conditions == condition) & (np.sign(rt) == sign)
@@ -80,7 +86,9 @@ def save_contaminated_datasets(
     folder = f"{SOURCE_MODEL}_{kind}_{suffix}"
     out_dir = BASE_DIR / folder
     if out_dir.exists() and not overwrite:
-        raise FileExistsError(f"{out_dir} already exists. Pass --overwrite to regenerate it.")
+        raise FileExistsError(
+            f"{out_dir} already exists. Pass --overwrite to regenerate it."
+        )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rng = np.random.default_rng(seed)
@@ -90,7 +98,7 @@ def save_contaminated_datasets(
         data = SIMULATORS[SOURCE_MODEL].sample(n_sim)
     finally:
         np.random.set_state(numpy_state)
-        
+
     parameter_rows = []
 
     for i in range(n_sim):
@@ -103,7 +111,12 @@ def save_contaminated_datasets(
         with (out_dir / f"s{i}.json").open("w") as f:
             json.dump(record, f)
 
-        row = {"id": f"s{i}", "source_model": SOURCE_MODEL, "contamination": kind, "fraction": fraction}
+        row = {
+            "id": f"s{i}",
+            "source_model": SOURCE_MODEL,
+            "contamination": kind,
+            "fraction": fraction,
+        }
         for key in ("alpha", "nu", "tau"):
             for j, value in enumerate(data[key][i].reshape(-1)):
                 row[f"{key}_{j}"] = float(value)

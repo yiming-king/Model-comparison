@@ -15,7 +15,9 @@ class Wagenmakers:
         self._df["id"] = self.df["id"].factorize()[0]
 
         # recode rt to pos when correct and neg when incorrect
-        self._df["rt"] = np.where(self.df["stim_cat"] == self.df["response"], self.df["rt"], -self.df["rt"])
+        self._df["rt"] = np.where(
+            self.df["stim_cat"] == self.df["response"], self.df["rt"], -self.df["rt"]
+        )
         # binary coding for condition
         self._df["speed"] = np.where(self.df["condition"] == "speed", 1, 0)
 
@@ -26,7 +28,7 @@ class Wagenmakers:
         self.n_trials_per_block = 96
         self.n_trials = self.n_blocks * self.n_trials_per_block
 
-        conditions = [1, 0] * (self.n_blocks // 2) # [1, 0, 1, 0] for 4 blocks
+        conditions = [1, 0] * (self.n_blocks // 2)  # [1, 0, 1, 0] for 4 blocks
         self.conditions = np.repeat(conditions, self.n_trials_per_block)
         # 96*1, 96*0, 96*1, 96*0
 
@@ -42,8 +44,8 @@ class Wagenmakers:
     def df_stan(self):
         def stanify(df):
             return dict(
-                rt=list(df["rt"][:self.n_trials]),
-                condition=list(df["speed"][:self.n_trials]),
+                rt=list(df["rt"][: self.n_trials]),
+                condition=list(df["speed"][: self.n_trials]),
                 N=self.n_trials,
             )
 
@@ -51,7 +53,7 @@ class Wagenmakers:
 
     def write_stan(self):
         for id, df in self.df_stan.items():
-            filename = "p"+str(id)+".json"
+            filename = "p" + str(id) + ".json"
             path = os.path.join(self.base_dir, "json", "empirical", filename)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w") as f:
@@ -60,11 +62,13 @@ class Wagenmakers:
     @property
     def df_array(self):
         if self._df_array is None:
-            df_array = np.zeros((17, self.n_trials, 2))  # (participants, trials, rt + condition)
+            df_array = np.zeros(
+                (17, self.n_trials, 2)
+            )  # (participants, trials, rt + condition)
 
             for subj, df in self.df_grouped:
-                df_array[subj, :self.n_trials, 0] = df["rt"][:self.n_trials]
-                df_array[subj, :self.n_trials, 1] = df["speed"][:self.n_trials]
+                df_array[subj, : self.n_trials, 0] = df["rt"][: self.n_trials]
+                df_array[subj, : self.n_trials, 1] = df["speed"][: self.n_trials]
 
             self._df_array = df_array
 
@@ -84,9 +88,7 @@ class Wagenmakers:
         }
 
 
-
 wagenmakers = Wagenmakers()
 
 if __name__ == "__main__":
     wagenmakers.write_stan()
-    

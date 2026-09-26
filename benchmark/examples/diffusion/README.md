@@ -167,97 +167,49 @@ each training configuration. The retained `run_config.json` files document the
 original 30+70 calculation, including historical `reuse_metrics` paths; these
 are provenance records, not dependencies needed to load or rerun the results.
 
-## Shared raw datasets for diagnostic references
+## Diagnostic references for indirect and direct methods
 
-For each candidate model M0–M3, indirect networks and all direct losses reuse
-the same persisted raw datasets in three separate splits: reference fit,
-reference calibration, and density validation. Fit observations estimate
-reference means/covariances, kernel references, and densities. Calibration
-observations determine diagnostic medians and 5th–95th percentiles. The third,
-held-out validation split is also fixed and shared across methods.
+Indirect networks retain their model-specific summary spaces and reference
+distributions for M0–M3. Their existing raw reference bank has 2,000 datasets
+**per model** for fit, calibration, and density validation.
 
-The default bank is
-`reference_datasets/diagnostics/seed2025_fit2000_cal2000_validation2000/`.
-Each candidate directory `{m0,m1,m2,m3}` contains
-`{fit,calibration,validation}.npz`, each with 2,000 raw datasets under the
-`observations` key. The bank's `manifest.json` records shapes, simulator and
-condition provenance, and file/array hashes. The shared entry point is
-`results.shared_reference_data.ensure_shared_reference_data()`.
-
-Each network transforms those identical raw observations with its own learned
-summary network. Its fitted references, normalized distances, and surprise
-labels therefore remain specific to that network and candidate model.
-Changing summary dimension, training variant, or direct loss does not redraw
-the raw reference splits. Derived diagnostic caches must match both the shared
-bank and the corresponding checkpoint before figures are regenerated.
-
-The 400 datasets in `calibration_reference_100` remain a separate benchmark
-for approximation-error thresholds. They are not added to the diagnostic
-scoring batch: the four diagnostics still score only the 136 observed
-datasets. Reference simulation and density fitting do not retrain the
-indirect or direct inference networks.
+Each direct loss has one shared summary network. Its diagnostic reference is a
+balanced pool across M0–M3, embedded by that direct network. Defaults
+`n_fit=2000`, `n_calibration=2000`, and `n_density_validation=2000` are
+**totals**: 500 datasets per model in each partition. One reference law and
+threshold are fitted per diagnostic (L2, Linf, density, Kernel MMD), yielding
+one score per observed dataset. The raw bank is separate from the independent
+PMP-error calibration benchmark. The direct network is never retrained by
+reference fitting.
 
 ## Direct versus indirect PMP comparison
 
-Open `notebooks/pmp_direct_indirect_comparison.ipynb` in the `benchmark2`
-environment. It discovers saved `networks/direct_<loss>.keras` checkpoints for
-cross-entropy, exponential, and logistic losses. Currently only cross-entropy
-is available. Missing losses are printed explicitly and omitted; the notebook
-does not train classifiers or substitute another loss's checkpoint. Adding the
-other saved checkpoints automatically adds their comparison rows and overlays.
+`notebooks/pmp_direct_indirect_comparison.ipynb` reads the saved direct
+checkpoints in `approximators/trained/direct/` (`cent`, `exponential`,
+`logistic`) and compares them with the same S4D indirect baseline and Stan
+gold-standard PMP. Results for the three losses are in
+`results/direct/direct_{cross_entropy,exponential,logistic}/`; the cross-entropy
+checkpoint is named `direct_cent.keras`.
 
-The training notebooks `direct_cent.ipynb`, `direct_exp.ipynb`, and
-`direct_logistic.ipynb` now call `ensure_direct_pmp_thresholds()` and
-`ensure_direct_diagnostics()` in their evaluation cell after saving the
-checkpoint. Each evaluates that saved checkpoint and writes to the same
-`results/direct/direct_<loss>/` layout. Use the standalone comparison notebook
-to load and evaluate saved checkpoints without rerunning the training cells.
+`analysis/direct_diagnostics.py` embeds the balanced reference, calibration,
+validation, and 136 observed datasets in each direct network's own shared
+summary space. It saves one pooled reference and four scores per observed
+dataset. It does not reuse indirect diagnostic scores or model-specific
+surprise classes. `rho = distance / high`, and the green plot background shows
+the central reference interval `rho_low <= rho <= 1`.
 
-The indirect baseline is `S4D` **with MMD**, matching `direct_cent.ipynb`, and
-the gold standard is the existing Stan bridge-sampling PMP. Observed results
-are joined by `(dataset, id)`, retaining empirical, simulated, and contaminated
-source names. The current comparison includes 136 observed datasets. Both
-methods use the same observations and gold probabilities. Recovery plots use
-circles for indirect PMP and crosses for direct PMP, with one shared 0–1
-`cividis` color bar showing the candidate model's gold-standard PMP.
-
-Each direct loss's four diagnostics (L2, Linf, density, and Kernel) are computed
-for the 136 observed datasets in that classifier's own learned summary
-embeddings, with separate reference distributions for M0–M3 fitted from
-the shared raw reference splits through each network's own embeddings. They do
-not reuse indirect diagnostic values or surprise classes. Compatible caches
-are validated against checkpoint and input
-provenance. The first run may fit diagnostic reference densities; that is
-separate from training a direct classifier.
-
-Direct PMP error calibration uses the same `calibration_reference_100`
-datasets and Stan reference as the indirect benchmark. These 400 datasets are
-used only to calculate direct PMP error thresholds, not to score the four
-summary diagnostics. Within each generating model, the four signed PMP errors
-are pooled after requiring convergence for
-all candidate fits. The 5th–95th percentiles form the interval; `n_values` is
-400 when all 100 datasets are retained. The diagnostic row for M_j displays
-the interval calibrated on datasets generated by M_j, pooling all four PMP
-components. Direct models provide PMP only; no direct parameter-posterior or
-logML error thresholds are produced.
-
-Outputs are under `results/direct/direct_<loss>/`; combined PNG/PDF figures
-are under `results/direct/direct_loss_comparison/figures`. The observed
-`pmp_comparison.csv` and diagnostic rows drive the comparison figures.
-`diagnostics/diagnostic_frame.csv` contains the four diagnostics for the 136
-observed datasets. The 400 calibration datasets supply the PMP error
-thresholds displayed in those plots; diagnostic reference distributions are
-fitted separately for each network using the shared raw fit/calibration/
-validation splits described above.
-
-The diagnostic figure follows the Gaussian layout, without an overall title
-or upper-left reference strips. Green vertical shading covers the union of
-the available losses' normalized diagnostic reference intervals. Green
-horizontal shading covers the intersection of their PMP calibration
-intervals (or a lighter enclosing interval if disjoint); colored dashed lines
-retain each loss's own bounds. The vertical shading is a display envelope,
-not a joint classification across networks. Point shapes still use each
-loss's own four-model high-surprise rule.
+The independent direct PMP calibration reuses the 100 saved benchmark datasets
+per generating model and their indirect-calibration gold PMP vectors. Each
+direct network evaluates the same 400 datasets and calibrates a separate
+central 90% signed PMP error interval for each candidate model. A dataset has
+high PMP error when any candidate's signed error leaves its interval. The
+comparison notebook reads those saved intervals.
+`rho > 1` predicts high error; the
+saved table reports TP/FP/TN/FN, FNR, FPR, and ROC AUC. Each direct network
+has a 4×4 plot, with candidate models as rows and diagnostics as columns.
+Horizontal lines mark each candidate's signed 90% PMP error bounds, with
+simulated datasets as filled markers and empirical datasets as hollow markers. They are saved under
+`results/direct/direct_loss_comparison/figures/`.
 
 ## Intentional differences from Simon's original scripts
 

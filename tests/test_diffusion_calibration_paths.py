@@ -4,7 +4,9 @@ import pandas as pd
 import pytest
 
 from benchmark.examples.diffusion.config import TrainingConfig
-from benchmark.examples.diffusion.results import summary_dimension_comparison as comparison
+from benchmark.examples.diffusion.results import (
+    summary_dimension_comparison as comparison,
+)
 
 
 @pytest.mark.parametrize(
@@ -57,4 +59,9 @@ def test_threshold_loader_selects_matching_100_dataset_run(
 def test_default_summary_specs_match_complete_calibration_dimensions():
     for specs in (comparison.WITH_MMD_SUMMARY_SPECS, comparison.NO_MMD_SUMMARY_SPECS):
         assert [config.summary_multiplier for _, config in specs] == [1, 2, 4]
-    assert comparison._make_summary_specs(summary_multipliers=(6,))[0][1].summary_multiplier == 6
+    assert (
+        comparison._make_summary_specs(summary_multipliers=(6,))[0][
+            1
+        ].summary_multiplier
+        == 6
+    )

@@ -1,17 +1,17 @@
 {
-  "created_at_utc": "2026-09-22T10:46:37.159736+00:00",
+  "created_at_utc": "2026-09-25T14:51:36.444529+00:00",
   "identity": {
-    "schema_version": 2,
+    "schema_version": 3,
     "summary_owner": "direct_exponential",
     "shared_reference_data": {
-      "bank_directory": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/reference_datasets/diagnostics/seed2025_fit2000_cal2000_validation2000",
+      "bank_directory": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/reference_datasets/diagnostics/seed2025_fit500_cal500_validation500",
       "generation": {
         "schema_version": 1,
         "seed": 2025,
         "counts": {
-          "fit": 2000,
-          "calibration": 2000,
-          "validation": 2000
+          "fit": 500,
+          "calibration": 500,
+          "validation": 500
         },
         "models": [
           "m0",
@@ -20,37 +20,37 @@
           "m3"
         ],
         "num_obs": 384,
-        "simulator_sha256": "c72c12e69d39c5e2ed688ed66a60d385ad5446db01a7be01783689476ada8148",
+        "simulator_sha256": "23bd7a6f848c197e645bf67962cbaf5e0a9ccb207f6dc34aa0228527d50df560",
         "conditions_sha256": "8d801f4e3542d6c5c495de3d35f7215550eadb9a2394d1695b280d5bc9dfe492",
         "protocol": "per-model MT19937 seed+model_index; fit then calibration; validation reseeded at seed+1000000+model_index",
         "dtype": "float32"
       },
       "arrays": {
         "m0": {
-          "fit": "2852ef5a1fb58aacdedf95eac9419bbc4044126407348205732189f258a11c1e",
-          "calibration": "d294c4cd4b7649e541ca4b4b8e9e1dac4296d4d3ad422223df25e61f1e7cd4cb",
-          "validation": "09fc73117efefe7070a58e8989e1d5e0cd2337008b69a4cf09e8e8da66cdd931"
+          "fit": "1fd0b029a82a040661fef0bfcdb1fcf495c86fda1c65381315a0c5a8d3b77077",
+          "calibration": "0b38c35ee6ee3513e76a63ea4b6e1eb7ca6146c4294ec4a252768169d5742004",
+          "validation": "0f42a619cb70f99e9c0400dfb27f46afbc4b0271ffd7ff99cb6909a4a792de44"
         },
         "m1": {
-          "fit": "3a1b497ec9acf9d1aefba903df81cb428bfc80dc01e244ea771f5272b014a609",
-          "calibration": "a882d25e43a2e5a2eb3e56e2a8d64ee0ee9f3eee61530d764e5a75b1167e226b",
-          "validation": "c875e546120e77ed354b48c584ffa9989a6a80648e2a69ef6d95570a00749eae"
+          "fit": "dc6a09ddda76b7ede08887a23a187135ad597bd48b11e9e56f0617a6a5af0429",
+          "calibration": "1f43eea580bbb0e0f7dd88440c5084f784c46f0418066943d114d3f1327b4242",
+          "validation": "e5dd3414f9783d9a7d2531798a9abd6cfb0c909dbdb9fe418c8ceb591d71f004"
         },
         "m2": {
-          "fit": "ff6774a5c2a7171b6f4b3a6abd0be1377c52259710239d528f541495e196f00a",
-          "calibration": "1a7fb8d2f362dc58b32db778a3327a25d284f062e72c0b079ca1c4b71b514d26",
-          "validation": "2abb3d0cf653e917b6717d88318a42bfe97e34a96b5d145139821e14f5a4dc2e"
+          "fit": "a79e5606b55e19a32a3b7ab8b6a2c41b344be5572a029f42be5e1ea7060bcda9",
+          "calibration": "747ee9fd562077b46e1fa7a59f7c9b9c83150b173c443fb5eb2dc3c0eda791dd",
+          "validation": "d5f10984838d5d5e2e0d724fa8eff7b30a787bc851d3b373659354bdc66eed3a"
         },
         "m3": {
-          "fit": "3a77b870199d3de0c043d758ebac41692ae7c1bed400d2c3b31f65098105f2db",
-          "calibration": "1a6adb8e0397b5655aac82d034b297299433cc779332d789400fb237e8d2b8b4",
-          "validation": "5d6adf4e1db631a91a7227c6994f5d7362489367a9c04b48e1dc96e5903956ed"
+          "fit": "ff74ca550aef740ff7b3cb2c6ec3ce34e0ee9c6d90225ae7631ea99d9c8a8e7f",
+          "calibration": "c99d72af128c344116245698feb0fe4408527d601405b5f5d1a3baa2486b7ba5",
+          "validation": "34b2f2bb81f037987887a382100cd339d1d17b53e8cd4581dcf3aabd361fcd51"
         }
       }
     },
-    "shared_fitting_implementation_sha256": "fcbd59aec9b892bd761e40f932e34308645567e7a9e20097aa44c1ec73cb4800",
+    "pooling": "uniform balanced model indices; n_fit, n_calibration, n_density_validation are totals",
     "checkpoint": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/approximators/trained/direct/direct_exponential.keras",
-    "checkpoint_sha256": "216a847040d38e3fefdb1585c12f584de0ba3ef7a601633daf546c0a58becf9d",
+    "checkpoint_sha256": "7a830c45fb9f83a1a974e3510bd6e7bff7c79dff8114573d8e5030b39187dd0c",
     "summary_dim": 12,
     "num_obs": 384,
     "model_order": [
@@ -69,10 +69,10 @@
       "density_batch_size": 128,
       "n_density_validation": 2000
     },
-    "implementation_sha256": "a902a147b0123d14e1bca54cb7ce6f03d731011b797778f9aded743ae875cf71",
-    "reference_implementation_sha256": "5721e1f4ee93a833f3d2cb7e93f011df0e2da186005e2be2952cff6fa434fcc0",
-    "simulator_sha256": "c72c12e69d39c5e2ed688ed66a60d385ad5446db01a7be01783689476ada8148",
-    "dataset_loader_sha256": "299c5b1ecee7d4ef8e43e888e023769f014c194e3ed62685130f8ea900ee66d0",
+    "implementation_sha256": "8a957314a3e9e6c36487810d68c38cc86ce6a8da95b00bd788616a5e99ca7723",
+    "reference_implementation_sha256": "0f442c4f8716b620cea12b16ce0b13287e9a89c81b5c18cc00fc28dd23bb6e62",
+    "simulator_sha256": "23bd7a6f848c197e645bf67962cbaf5e0a9ccb207f6dc34aa0228527d50df560",
+    "dataset_loader_sha256": "0215eb46bcff565573ed4327ad316c689f28443c4a14b2ba87a7d945f1b3d6ce",
     "data_adapter_sha256": "f01a2d3a5716ec5591c4f6d7a653df4b895f303c8987cd1884a4d955b57d6913",
     "observation_loader_sha256": "dddad595f9d5191aac2f7b1a6ca62a91175c53ee674bd2973d104f346db5f6ad",
     "conditions_sha256": "f61637f9b00637e2018a5cc3fea8fa714e82b8977e227eecc54bd42e88743fa4",
@@ -628,43 +628,20 @@
     "observations_sha256": "7809b41c05a7379b2803116c1c395873eef898a4c43a170c0e81590f00ae5d5c"
   },
   "output_sha256": {
-    "diagnostics/diagnostic_frame.csv": "b1780b081dddb8ffb29729ad7f49a22ad8e88808dad56b82bf172ae7f5f867b6",
-    "pmp_comparison.csv": "9eb9e2a5e5b35de391e7c00566380999289f785954c39ed676e885bc5983d542",
-    "diagnostics/observed_summaries.npz": "b7c6adbeef8680465104bb3a50481202db7228965f0ac36fb3e30e7b456dc71c"
+    "diagnostics/diagnostic_frame.csv": "801c3480814eba7705c01bf3eaec1cf7f979140d1dd26bff3c3fa5832a7a4b12",
+    "pmp_comparison.csv": "87127e59aada92b3e4e0796b9319dbee06b6827d4473f094593af85fcd98545b",
+    "diagnostics/observed_summaries.npz": "ca200a70902e46da7fd7ddc4f90aa5df104f1135d50019a8913864e95af9729f"
   },
   "num_datasets": 136,
-  "diagnostic_rows": 2176,
-  "normalization": "rho=(distance-reference_median)/(reference_high-reference_median)",
-  "classification": "all high surprise iff every candidate distance exceeds its own upper reference bound",
+  "diagnostic_rows": 544,
+  "normalization": "rho=distance/reference_high",
   "reference_data": "persisted raw fit/calibration/validation partitions shared with all indirect networks; separate from observed and metric-calibration data",
+  "pooled_reference_sha256": "6027795fe7f403b0e1bf637424aeaf41ca1530299b6c5c15fb1469a174bbc64c",
   "density_validation": {
-    "m0": {
-      "density_validation_samples": 2000,
-      "density_validation_n_simulator": 2000,
-      "density_validation_n_flow": 2000,
-      "density_validation_mmd2": 0.003049500951364914,
-      "density_validation_mmd": 0.055222286727053545
-    },
-    "m1": {
-      "density_validation_samples": 2000,
-      "density_validation_n_simulator": 2000,
-      "density_validation_n_flow": 2000,
-      "density_validation_mmd2": 0.0007081079545643298,
-      "density_validation_mmd": 0.026610297904464165
-    },
-    "m2": {
-      "density_validation_samples": 2000,
-      "density_validation_n_simulator": 2000,
-      "density_validation_n_flow": 2000,
-      "density_validation_mmd2": 0.0022789588609937184,
-      "density_validation_mmd": 0.04773844217183588
-    },
-    "m3": {
-      "density_validation_samples": 2000,
-      "density_validation_n_simulator": 2000,
-      "density_validation_n_flow": 2000,
-      "density_validation_mmd2": 0.0013533378541854546,
-      "density_validation_mmd": 0.03678774054199924
-    }
+    "density_validation_samples": 2000,
+    "density_validation_n_simulator": 2000,
+    "density_validation_n_flow": 2000,
+    "density_validation_mmd2": 0.001057264417762438,
+    "density_validation_mmd": 0.032515602681827044
   }
 }

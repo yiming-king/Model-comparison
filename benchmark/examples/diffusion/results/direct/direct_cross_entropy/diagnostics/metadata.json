@@ -1,0 +1,647 @@
+{
+  "created_at_utc": "2026-09-25T14:51:17.510392+00:00",
+  "identity": {
+    "schema_version": 3,
+    "summary_owner": "direct_cross_entropy",
+    "shared_reference_data": {
+      "bank_directory": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/reference_datasets/diagnostics/seed2025_fit500_cal500_validation500",
+      "generation": {
+        "schema_version": 1,
+        "seed": 2025,
+        "counts": {
+          "fit": 500,
+          "calibration": 500,
+          "validation": 500
+        },
+        "models": [
+          "m0",
+          "m1",
+          "m2",
+          "m3"
+        ],
+        "num_obs": 384,
+        "simulator_sha256": "23bd7a6f848c197e645bf67962cbaf5e0a9ccb207f6dc34aa0228527d50df560",
+        "conditions_sha256": "8d801f4e3542d6c5c495de3d35f7215550eadb9a2394d1695b280d5bc9dfe492",
+        "protocol": "per-model MT19937 seed+model_index; fit then calibration; validation reseeded at seed+1000000+model_index",
+        "dtype": "float32"
+      },
+      "arrays": {
+        "m0": {
+          "fit": "1fd0b029a82a040661fef0bfcdb1fcf495c86fda1c65381315a0c5a8d3b77077",
+          "calibration": "0b38c35ee6ee3513e76a63ea4b6e1eb7ca6146c4294ec4a252768169d5742004",
+          "validation": "0f42a619cb70f99e9c0400dfb27f46afbc4b0271ffd7ff99cb6909a4a792de44"
+        },
+        "m1": {
+          "fit": "dc6a09ddda76b7ede08887a23a187135ad597bd48b11e9e56f0617a6a5af0429",
+          "calibration": "1f43eea580bbb0e0f7dd88440c5084f784c46f0418066943d114d3f1327b4242",
+          "validation": "e5dd3414f9783d9a7d2531798a9abd6cfb0c909dbdb9fe418c8ceb591d71f004"
+        },
+        "m2": {
+          "fit": "a79e5606b55e19a32a3b7ab8b6a2c41b344be5572a029f42be5e1ea7060bcda9",
+          "calibration": "747ee9fd562077b46e1fa7a59f7c9b9c83150b173c443fb5eb2dc3c0eda791dd",
+          "validation": "d5f10984838d5d5e2e0d724fa8eff7b30a787bc851d3b373659354bdc66eed3a"
+        },
+        "m3": {
+          "fit": "ff74ca550aef740ff7b3cb2c6ec3ce34e0ee9c6d90225ae7631ea99d9c8a8e7f",
+          "calibration": "c99d72af128c344116245698feb0fe4408527d601405b5f5d1a3baa2486b7ba5",
+          "validation": "34b2f2bb81f037987887a382100cd339d1d17b53e8cd4581dcf3aabd361fcd51"
+        }
+      }
+    },
+    "pooling": "uniform balanced model indices; n_fit, n_calibration, n_density_validation are totals",
+    "checkpoint": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/approximators/trained/direct/direct_cent.keras",
+    "checkpoint_sha256": "179a265b9efe75d89bd4ff856d2b37de0510a66c517f0a6e493252049ca77448",
+    "summary_dim": 12,
+    "num_obs": 384,
+    "model_order": [
+      "m0",
+      "m1",
+      "m2",
+      "m3"
+    ],
+    "settings": {
+      "n_fit": 2000,
+      "n_calibration": 2000,
+      "alpha": 0.1,
+      "n_boot": 1000,
+      "seed": 2025,
+      "density_epochs": 250,
+      "density_batch_size": 128,
+      "n_density_validation": 2000
+    },
+    "implementation_sha256": "8a957314a3e9e6c36487810d68c38cc86ce6a8da95b00bd788616a5e99ca7723",
+    "reference_implementation_sha256": "0f442c4f8716b620cea12b16ce0b13287e9a89c81b5c18cc00fc28dd23bb6e62",
+    "simulator_sha256": "23bd7a6f848c197e645bf67962cbaf5e0a9ccb207f6dc34aa0228527d50df560",
+    "dataset_loader_sha256": "0215eb46bcff565573ed4327ad316c689f28443c4a14b2ba87a7d945f1b3d6ce",
+    "data_adapter_sha256": "f01a2d3a5716ec5591c4f6d7a653df4b895f303c8987cd1884a4d955b57d6913",
+    "observation_loader_sha256": "dddad595f9d5191aac2f7b1a6ca62a91175c53ee674bd2973d104f346db5f6ad",
+    "conditions_sha256": "f61637f9b00637e2018a5cc3fea8fa714e82b8977e227eecc54bd42e88743fa4",
+    "indirect_configuration": "S4D",
+    "indirect_path": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/results/NPE_results/npe_S4D_all_observed_results_gold.csv",
+    "indirect_sha256": "7d4ad97b9e57a55755da121f06c089f4b22dc9fa03d3c9b6371b52fb0ee61fc0",
+    "observation_keys": [
+      [
+        "empirical",
+        "p0"
+      ],
+      [
+        "empirical",
+        "p1"
+      ],
+      [
+        "empirical",
+        "p2"
+      ],
+      [
+        "empirical",
+        "p3"
+      ],
+      [
+        "empirical",
+        "p4"
+      ],
+      [
+        "empirical",
+        "p5"
+      ],
+      [
+        "empirical",
+        "p6"
+      ],
+      [
+        "empirical",
+        "p7"
+      ],
+      [
+        "empirical",
+        "p8"
+      ],
+      [
+        "empirical",
+        "p9"
+      ],
+      [
+        "empirical",
+        "p10"
+      ],
+      [
+        "empirical",
+        "p11"
+      ],
+      [
+        "empirical",
+        "p12"
+      ],
+      [
+        "empirical",
+        "p13"
+      ],
+      [
+        "empirical",
+        "p14"
+      ],
+      [
+        "empirical",
+        "p15"
+      ],
+      [
+        "empirical",
+        "p16"
+      ],
+      [
+        "simulated_from_m0",
+        "s0"
+      ],
+      [
+        "simulated_from_m0",
+        "s1"
+      ],
+      [
+        "simulated_from_m0",
+        "s2"
+      ],
+      [
+        "simulated_from_m0",
+        "s3"
+      ],
+      [
+        "simulated_from_m0",
+        "s4"
+      ],
+      [
+        "simulated_from_m0",
+        "s5"
+      ],
+      [
+        "simulated_from_m0",
+        "s6"
+      ],
+      [
+        "simulated_from_m0",
+        "s7"
+      ],
+      [
+        "simulated_from_m0",
+        "s8"
+      ],
+      [
+        "simulated_from_m0",
+        "s9"
+      ],
+      [
+        "simulated_from_m0",
+        "s10"
+      ],
+      [
+        "simulated_from_m0",
+        "s11"
+      ],
+      [
+        "simulated_from_m0",
+        "s12"
+      ],
+      [
+        "simulated_from_m0",
+        "s13"
+      ],
+      [
+        "simulated_from_m0",
+        "s14"
+      ],
+      [
+        "simulated_from_m0",
+        "s15"
+      ],
+      [
+        "simulated_from_m0",
+        "s16"
+      ],
+      [
+        "simulated_from_m1",
+        "s0"
+      ],
+      [
+        "simulated_from_m1",
+        "s1"
+      ],
+      [
+        "simulated_from_m1",
+        "s2"
+      ],
+      [
+        "simulated_from_m1",
+        "s3"
+      ],
+      [
+        "simulated_from_m1",
+        "s4"
+      ],
+      [
+        "simulated_from_m1",
+        "s5"
+      ],
+      [
+        "simulated_from_m1",
+        "s6"
+      ],
+      [
+        "simulated_from_m1",
+        "s7"
+      ],
+      [
+        "simulated_from_m1",
+        "s8"
+      ],
+      [
+        "simulated_from_m1",
+        "s9"
+      ],
+      [
+        "simulated_from_m1",
+        "s10"
+      ],
+      [
+        "simulated_from_m1",
+        "s11"
+      ],
+      [
+        "simulated_from_m1",
+        "s12"
+      ],
+      [
+        "simulated_from_m1",
+        "s13"
+      ],
+      [
+        "simulated_from_m1",
+        "s14"
+      ],
+      [
+        "simulated_from_m1",
+        "s15"
+      ],
+      [
+        "simulated_from_m1",
+        "s16"
+      ],
+      [
+        "simulated_from_m2",
+        "s0"
+      ],
+      [
+        "simulated_from_m2",
+        "s1"
+      ],
+      [
+        "simulated_from_m2",
+        "s2"
+      ],
+      [
+        "simulated_from_m2",
+        "s3"
+      ],
+      [
+        "simulated_from_m2",
+        "s4"
+      ],
+      [
+        "simulated_from_m2",
+        "s5"
+      ],
+      [
+        "simulated_from_m2",
+        "s6"
+      ],
+      [
+        "simulated_from_m2",
+        "s7"
+      ],
+      [
+        "simulated_from_m2",
+        "s8"
+      ],
+      [
+        "simulated_from_m2",
+        "s9"
+      ],
+      [
+        "simulated_from_m2",
+        "s10"
+      ],
+      [
+        "simulated_from_m2",
+        "s11"
+      ],
+      [
+        "simulated_from_m2",
+        "s12"
+      ],
+      [
+        "simulated_from_m2",
+        "s13"
+      ],
+      [
+        "simulated_from_m2",
+        "s14"
+      ],
+      [
+        "simulated_from_m2",
+        "s15"
+      ],
+      [
+        "simulated_from_m2",
+        "s16"
+      ],
+      [
+        "simulated_from_m3",
+        "s0"
+      ],
+      [
+        "simulated_from_m3",
+        "s1"
+      ],
+      [
+        "simulated_from_m3",
+        "s2"
+      ],
+      [
+        "simulated_from_m3",
+        "s3"
+      ],
+      [
+        "simulated_from_m3",
+        "s4"
+      ],
+      [
+        "simulated_from_m3",
+        "s5"
+      ],
+      [
+        "simulated_from_m3",
+        "s6"
+      ],
+      [
+        "simulated_from_m3",
+        "s7"
+      ],
+      [
+        "simulated_from_m3",
+        "s8"
+      ],
+      [
+        "simulated_from_m3",
+        "s9"
+      ],
+      [
+        "simulated_from_m3",
+        "s10"
+      ],
+      [
+        "simulated_from_m3",
+        "s11"
+      ],
+      [
+        "simulated_from_m3",
+        "s12"
+      ],
+      [
+        "simulated_from_m3",
+        "s13"
+      ],
+      [
+        "simulated_from_m3",
+        "s14"
+      ],
+      [
+        "simulated_from_m3",
+        "s15"
+      ],
+      [
+        "simulated_from_m3",
+        "s16"
+      ],
+      [
+        "m3_fast_30",
+        "s0"
+      ],
+      [
+        "m3_fast_30",
+        "s1"
+      ],
+      [
+        "m3_fast_30",
+        "s2"
+      ],
+      [
+        "m3_fast_30",
+        "s3"
+      ],
+      [
+        "m3_fast_30",
+        "s4"
+      ],
+      [
+        "m3_fast_30",
+        "s5"
+      ],
+      [
+        "m3_fast_30",
+        "s6"
+      ],
+      [
+        "m3_fast_30",
+        "s7"
+      ],
+      [
+        "m3_fast_30",
+        "s8"
+      ],
+      [
+        "m3_fast_30",
+        "s9"
+      ],
+      [
+        "m3_fast_30",
+        "s10"
+      ],
+      [
+        "m3_fast_30",
+        "s11"
+      ],
+      [
+        "m3_fast_30",
+        "s12"
+      ],
+      [
+        "m3_fast_30",
+        "s13"
+      ],
+      [
+        "m3_fast_30",
+        "s14"
+      ],
+      [
+        "m3_fast_30",
+        "s15"
+      ],
+      [
+        "m3_fast_30",
+        "s16"
+      ],
+      [
+        "m3_slow_30",
+        "s0"
+      ],
+      [
+        "m3_slow_30",
+        "s1"
+      ],
+      [
+        "m3_slow_30",
+        "s2"
+      ],
+      [
+        "m3_slow_30",
+        "s3"
+      ],
+      [
+        "m3_slow_30",
+        "s4"
+      ],
+      [
+        "m3_slow_30",
+        "s5"
+      ],
+      [
+        "m3_slow_30",
+        "s6"
+      ],
+      [
+        "m3_slow_30",
+        "s7"
+      ],
+      [
+        "m3_slow_30",
+        "s8"
+      ],
+      [
+        "m3_slow_30",
+        "s9"
+      ],
+      [
+        "m3_slow_30",
+        "s10"
+      ],
+      [
+        "m3_slow_30",
+        "s11"
+      ],
+      [
+        "m3_slow_30",
+        "s12"
+      ],
+      [
+        "m3_slow_30",
+        "s13"
+      ],
+      [
+        "m3_slow_30",
+        "s14"
+      ],
+      [
+        "m3_slow_30",
+        "s15"
+      ],
+      [
+        "m3_slow_30",
+        "s16"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s0"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s1"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s2"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s3"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s4"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s5"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s6"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s7"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s8"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s9"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s10"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s11"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s12"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s13"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s14"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s15"
+      ],
+      [
+        "m3_fast_slow_30",
+        "s16"
+      ]
+    ],
+    "observations_sha256": "7809b41c05a7379b2803116c1c395873eef898a4c43a170c0e81590f00ae5d5c"
+  },
+  "output_sha256": {
+    "diagnostics/diagnostic_frame.csv": "4f684d43efa6907374994179db85f43bc5dea5a8735564f8a88323ec3c7f72fd",
+    "pmp_comparison.csv": "575706776d75f44b11a0886211b9b48a74e86f2b93ede1d75fb1bbd90618ae5d",
+    "diagnostics/observed_summaries.npz": "f00105d2b333064c63316215951b8598fd2a8ff7a9d3608d6e4fa1368d02e00b"
+  },
+  "num_datasets": 136,
+  "diagnostic_rows": 544,
+  "normalization": "rho=distance/reference_high",
+  "reference_data": "persisted raw fit/calibration/validation partitions shared with all indirect networks; separate from observed and metric-calibration data",
+  "pooled_reference_sha256": "3fd9a65814116dd0a3907cfdfb111845a21f7226677c0c9f5c556c71578ac775",
+  "density_validation": {
+    "density_validation_samples": 2000,
+    "density_validation_n_simulator": 2000,
+    "density_validation_n_flow": 2000,
+    "density_validation_mmd2": 0.002999958112856582,
+    "density_validation_mmd": 0.05477187337362656
+  }
+}

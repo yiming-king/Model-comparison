@@ -1,9 +1,9 @@
 {
-  "created_at_utc": "2026-09-22T10:46:39.907104+00:00",
+  "created_at_utc": "2026-09-25T14:51:38.204232+00:00",
   "loss_function": "logistic",
   "num_datasets": 136,
   "direct_checkpoint": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/approximators/trained/direct/direct_logistic.keras",
-  "checkpoint_sha256": "81bd6d03f69abde528ebc21f45b0a21ed5d520af1c4ef483c27f3bd67bbf6bfb",
+  "checkpoint_sha256": "3d9662f6810b3f6b0d894bee41b9726995ec8def103996959d19085e5912b8ae",
   "direct_summary_dimension": 12,
   "model_order": [
     "m0",

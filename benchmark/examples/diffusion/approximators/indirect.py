@@ -11,7 +11,14 @@ import bayesflow as bf
 import keras
 import numpy as np
 
-from ..config import MODELS, TrainingConfig, ensure_dirs, get_history_path, get_name, get_path
+from ..config import (
+    MODELS,
+    TrainingConfig,
+    ensure_dirs,
+    get_history_path,
+    get_name,
+    get_path,
+)
 from ..networks import PosteriorNetwork, SummaryNetwork
 from ..simulators import SIMULATORS
 
@@ -29,9 +36,14 @@ def build_adapter() -> bf.adapters.Adapter:
         bf.adapters.Adapter()
         .convert_dtype("float64", "float32")
         .as_set(["rt", "conditions"])
-        .concatenate(["rt", "conditions"], into="summary_variables") #(batch_size, n_trials, 2)
-        .concatenate(["alpha", "nu", "tau"], into="inference_variables") #(batch_size, num_parameters)
+        .concatenate(
+            ["rt", "conditions"], into="summary_variables"
+        )  # (batch_size, n_trials, 2)
+        .concatenate(
+            ["alpha", "nu", "tau"], into="inference_variables"
+        )  # (batch_size, num_parameters)
     )
+
 
 def get_simulator(model: str):
     return SIMULATORS[model]
@@ -54,7 +66,9 @@ def generate_validation_data(
         np.random.set_state(rng_state)
 
 
-def build_workflow(model: str, config: TrainingConfig = TrainingConfig()) -> bf.BasicWorkflow:
+def build_workflow(
+    model: str, config: TrainingConfig = TrainingConfig()
+) -> bf.BasicWorkflow:
     return bf.BasicWorkflow(
         simulator=get_simulator(model),
         adapter=build_adapter(),
@@ -67,17 +81,26 @@ def build_workflow(model: str, config: TrainingConfig = TrainingConfig()) -> bf.
         standardize="all",
     )
 
-def load_approximator(model: str, config: TrainingConfig = TrainingConfig(), approximation: str = "NPE"):
+
+def load_approximator(
+    model: str, config: TrainingConfig = TrainingConfig(), approximation: str = "NPE"
+):
     name = get_name(model, approximation, config.summary_label)
     path = get_path(name)
     if not path.exists():
         raise FileNotFoundError(f"Trained approximator not found: {path}")
     # Preserve historical DeepSet attention computations when loading old archives.
     from ...gaussian.approximators.legacy_npe import load_checkpoint
+
     return load_checkpoint(path)
 
 
-def save_history(history, model: str, config: TrainingConfig = TrainingConfig(), approximation: str = "NPE"):
+def save_history(
+    history,
+    model: str,
+    config: TrainingConfig = TrainingConfig(),
+    approximation: str = "NPE",
+):
     name = get_name(model, approximation, config.summary_label)
     path = get_history_path(name)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,7 +113,9 @@ def save_history(history, model: str, config: TrainingConfig = TrainingConfig(),
     return path
 
 
-def load_history(model: str, config: TrainingConfig = TrainingConfig(), approximation: str = "NPE"):
+def load_history(
+    model: str, config: TrainingConfig = TrainingConfig(), approximation: str = "NPE"
+):
     name = get_name(model, approximation, config.summary_label)
     path = get_history_path(name)
     if not path.exists():
@@ -111,7 +136,11 @@ def train_approximator(
     name = get_name(model, "NPE", config.summary_label)
     path = get_path(name)
     if path.exists() and not overwrite:
-        history = load_history(model, config=config) if get_history_path(name).exists() else None
+        history = (
+            load_history(model, config=config)
+            if get_history_path(name).exists()
+            else None
+        )
         return load_approximator(model, config=config), history
 
     workflow = build_workflow(model, config=config)
@@ -182,7 +211,9 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=default_config.batch_size)
     parser.add_argument("--num-batches", type=int, default=default_config.num_batches)
     parser.add_argument("--summary-dim", type=int, default=default_config.summary_dim)
-    parser.add_argument("--summary-multiplier", type=int, default=default_config.summary_multiplier)
+    parser.add_argument(
+        "--summary-multiplier", type=int, default=default_config.summary_multiplier
+    )
     parser.add_argument("--embed-dim", type=int, default=default_config.embed_dim)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--no-summary-mmd", action="store_true")
@@ -221,9 +252,7 @@ if __name__ == "__main__":
         summary_dim=args.summary_dim,
         summary_multiplier=args.summary_multiplier,
         embed_dim=args.embed_dim,
-        summary_base_distribution=(
-            None if args.no_summary_mmd else "normal"
-        ),
+        summary_base_distribution=(None if args.no_summary_mmd else "normal"),
         run_suffix=args.run_suffix,
     )
     train_approximators(

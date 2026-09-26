@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..config import CALIBRATION_ROOT, ASSUMED_MODELS
+from ..config import CALIBRATION_ROOT, ASSUMED_MODELS, calibration_output_dir
 
 
 DEFAULT_POSTERIOR_MMD_QUANTILE = 0.95
@@ -60,8 +60,8 @@ THRESHOLD_RULES = (
         metric="signed_pmp_error",
         value_column="signed_pmp_error",
         median_column="signed_pmp_error",
-        selection="all_candidate_models",
-        aggregation="all_four_pmp_components_from_well_specified_datasets",
+        selection="matching_model",
+        aggregation="matching_model_well_specified_datasets",
         interval="central_reference_interval",
     ),
 )
@@ -155,9 +155,7 @@ def calculate_thresholds(
                     "quantile_method": "linear",
                     "lower_threshold": lower_threshold,
                     "threshold": upper_threshold,
-                    "degenerate_interval": bool(
-                        lower_threshold == upper_threshold
-                    ),
+                    "degenerate_interval": bool(lower_threshold == upper_threshold),
                     "median": float(np.median(medians)),
                     "n_values": int(len(values)),
                     "aggregation": rule.aggregation,
@@ -234,7 +232,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    root = args.calibration_root / args.configuration
+    root = calibration_output_dir(args.configuration, args.calibration_root)
     thresholds, results = calculate_and_save_thresholds(
         root / "per_dataset_metrics.csv",
         root / "thresholds.csv",
@@ -243,7 +241,9 @@ def main() -> None:
         signed_error_coverage=args.signed_error_coverage,
     )
     print(f"Thresholds: {root / 'thresholds.csv'} ({len(thresholds)} rows)")
-    print(f"Metrics with thresholds: {root / 'per_dataset_results.csv'} ({len(results)} rows)")
+    print(
+        f"Metrics with thresholds: {root / 'per_dataset_results.csv'} ({len(results)} rows)"
+    )
 
 
 if __name__ == "__main__":

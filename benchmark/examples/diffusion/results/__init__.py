@@ -6,7 +6,11 @@ from .results import (
     load_results,
     save_results,
 )
-from .observed_datasets import OBSERVED_DATASETS, load_observed_dataset, load_true_parameters
+from .observed_datasets import (
+    OBSERVED_DATASETS,
+    load_observed_dataset,
+    load_true_parameters,
+)
 from .posterior_diagnostic import posterior_diagnostic_frame, save_posterior_diagnostic
 
 __all__ = [

@@ -1,0 +1,31 @@
+{
+  "configuration": "20d_10n",
+  "num_dims": 20,
+  "num_obs": 10,
+  "num_datasets": 100,
+  "num_posterior_samples": 1000,
+  "logml_method": "log_mean_exp",
+  "threshold_quantile": 0.95,
+  "posterior_mmd_quantile": 0.95,
+  "signed_error_coverage": 0.9,
+  "seed": 2025,
+  "gold_standard": "analytical",
+  "output_layout": "diffusion_style_v2",
+  "summary_networks": [
+    {
+      "network_tag": "20d_10n",
+      "summary_label": "S=1D",
+      "summary_dim": 20
+    },
+    {
+      "network_tag": "40d_10n",
+      "summary_label": "S=2D",
+      "summary_dim": 40
+    },
+    {
+      "network_tag": "80d_10n",
+      "summary_label": "S=4D",
+      "summary_dim": 80
+    }
+  ]
+}

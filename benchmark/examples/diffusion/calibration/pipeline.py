@@ -613,7 +613,9 @@ def _compatible_cached_metrics(
         return selected
     key_columns = ["dataset_id", "candidate_model"]
     if selected.duplicated(key_columns).any():
-        duplicates = selected.loc[selected.duplicated(key_columns, keep=False), key_columns]
+        duplicates = selected.loc[
+            selected.duplicated(key_columns, keep=False), key_columns
+        ]
         raise ValueError(
             "Duplicate rows in reusable metric cache: "
             f"{duplicates.drop_duplicates().to_dict(orient='records')}"
@@ -700,8 +702,9 @@ def compute_metrics(
                     if len(compatible):
                         cached_frames.append(compatible)
             frame = (
-                pd.concat(cached_frames, ignore_index=True)
-                .drop_duplicates(["dataset_id", "candidate_model"], keep="first")
+                pd.concat(cached_frames, ignore_index=True).drop_duplicates(
+                    ["dataset_id", "candidate_model"], keep="first"
+                )
                 if cached_frames
                 else pd.DataFrame()
             )
@@ -832,15 +835,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--k", type=int, default=DEFAULT_DATASETS_PER_MODEL,
+        "--k",
+        type=int,
+        default=DEFAULT_DATASETS_PER_MODEL,
         help="Number of independently seeded datasets per generating model (default: 100).",
     )
     parser.add_argument("--base-seed", type=int, default=2025)
     parser.add_argument("--models", nargs="+", default=list(MODELS))
     parser.add_argument("--candidate-models", nargs="+", default=list(MODELS))
-    parser.add_argument(
-        "--summary-multipliers", nargs="+", type=int, default=[1, 2, 4]
-    )
+    parser.add_argument("--summary-multipliers", nargs="+", type=int, default=[1, 2, 4])
     parser.add_argument(
         "--training-settings",
         nargs="+",
@@ -888,7 +891,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     else:
         selected_variant = "custom"
     if requested_variant is not None and selected_variant != requested_variant:
-        parser.error("--variant conflicts with the selected training settings or suffix")
+        parser.error(
+            "--variant conflicts with the selected training settings or suffix"
+        )
     if selected_variant == "custom" and args.output_root is None:
         parser.error("Custom/mixed training settings require an explicit --output-root")
     args.variant = selected_variant
@@ -932,7 +937,9 @@ def main() -> None:
                 "stage": args.stage,
                 "variant": args.variant,
                 "reference_root": (
-                    str(paths.reference_root) if paths.reference_root is not None else None
+                    str(paths.reference_root)
+                    if paths.reference_root is not None
+                    else None
                 ),
                 "reuse_metrics": (
                     str(reuse_metrics_path.resolve())

@@ -1,5 +1,5 @@
 {
-  "created_at_utc": "2026-09-23T13:04:03.654233+00:00",
+  "created_at_utc": "2026-09-24T12:56:03.207622+00:00",
   "num_datasets": 600,
   "loss_function": "cross_entropy",
   "direct_checkpoint": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/gaussian/networks/direct_cross_entropy.keras",

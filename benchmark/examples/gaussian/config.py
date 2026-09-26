@@ -14,6 +14,14 @@ NETWORK_DIR = BASE_DIR / "networks"
 RESULT_DIR = BASE_DIR / "results"
 CALIBRATION_ROOT = BASE_DIR / "calibration_outputs"
 
+
+def calibration_output_dir(
+    configuration: str, root: str | Path = CALIBRATION_ROOT
+) -> Path:
+    """Keep the primary 20d_10n calibration directly in calibration_outputs."""
+    root = Path(root)
+    return root if configuration == "20d_10n" else root / configuration
+
 MODEL_SPECS = {
     "m1": {"mu_prior_mean": 0.0, "mu_prior_std": 1.0, "likelihood_std": 1.0},
     "m2": {"mu_prior_mean": 3.0, "mu_prior_std": 1.0, "likelihood_std": 1.0},
@@ -138,7 +146,15 @@ def discover_network_sets(
         missing = set(ASSUMED_MODELS).difference(paths)
         if missing:
             continue
-        sets.append(
-            NetworkSet(tag, raw_dim, observations, summary_dim, dict(paths))
+        sets.append(NetworkSet(tag, raw_dim, observations, summary_dim, dict(paths)))
+    return tuple(
+        sorted(
+            sets,
+            key=lambda item: (
+                item.data_dim,
+                item.num_obs,
+                item.summary_dim,
+                item.network_tag,
+            ),
         )
-    return tuple(sorted(sets, key=lambda item: (item.data_dim, item.num_obs, item.summary_dim, item.network_tag)))
+    )

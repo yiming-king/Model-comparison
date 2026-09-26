@@ -17,9 +17,8 @@ from scipy.special import softmax
 from sklearn.metrics import roc_auc_score
 
 from ..config import BASE_DIR, MODELS, MODEL_TITLES, RESULT_DIR, TrainingConfig
-from .multisource_pipeline import all_observed_paths, reference_suite_path
+from .multisource_pipeline import all_observed_paths
 from .posterior_diagnostic import load_posterior_diagnostic
-from .summary_diagnostic import load_references
 
 
 SummarySpecs = tuple[tuple[str, TrainingConfig], ...]
@@ -27,7 +26,7 @@ AxisScaleSpec = str | Mapping[str, str]
 
 SUMMARY_LABELS = {1: "S=D", 2: "S=2D", 4: "S=4D", 6: "S=6D"}
 SUMMARY_COLORS = {
-    "S=D":  "#0072B2",
+    "S=D": "#0072B2",
     "S=2D": "#E69F00",
     "S=4D": "#CC79A7",
     "S=6D": "#009E73",
@@ -37,7 +36,6 @@ LEGACY_CALIBRATED_FIGURE_FILENAMES = {
     "combined_normalized_logml_error_vs_rho.png",
     "combined_normalized_pmp_error_vs_rho.png",
 }
-
 
 
 def _make_summary_specs(
@@ -95,26 +93,13 @@ def _compact_tick_label(value: float, _: int | None = None) -> str:
     return f"{value:.2g}"
 
 
-RHO_NORMALIZATIONS = ("centered", "upper_threshold")
-
-
-def _normalize_distance(x, median, high, method: str = "centered"):
-    """Normalize a diagnostic using either the legacy or d / d_high rule."""
-    if method not in RHO_NORMALIZATIONS:
-        raise ValueError(
-            f"rho normalization must be one of {RHO_NORMALIZATIONS}; got {method!r}"
-        )
+def _normalize_distance(x, high):
+    """Scale diagnostic distance by its upper reference threshold."""
     values = np.asarray(x, dtype=float)
     upper = np.asarray(high, dtype=float)
-    if method == "upper_threshold":
-        if np.any(np.isclose(upper, 0.0)):
-            raise ValueError("Diagnostic upper threshold must be non-zero")
-        return values / upper
-    center = np.asarray(median, dtype=float)
-    scale = upper - center
-    if np.any(np.isclose(scale, 0.0)):
-        raise ValueError("Diagnostic upper threshold must differ from its median")
-    return (values - center) / scale
+    if np.any(upper <= 0.0) or not np.isfinite(upper).all():
+        raise ValueError("Diagnostic upper threshold must be positive and finite")
+    return values / upper
 
 
 def _scale_nonnegative_metric(x, high):
@@ -221,6 +206,7 @@ def _shade_typical_set(
     if y_band is not None:
         ax.axhspan(*y_band, color=TYPICAL_SET_FILL, alpha=alpha, zorder=0)
 
+
 MODEL_MATCH_STYLES = {
     False: {"marker": "o", "size": 30, "label": "misspecified datasets"},
     True: {"marker": "s", "size": 40, "label": "well-specified datasets"},
@@ -267,7 +253,9 @@ METRIC_PLOTS = {
     },
 }
 
-CALIBRATION_THRESHOLD_PATH = BASE_DIR / "calibration_outputs_100_noMMD" / "thresholds.csv"
+CALIBRATION_THRESHOLD_PATH = (
+    BASE_DIR / "calibration_outputs_100_noMMD" / "thresholds.csv"
+)
 CALIBRATED_METRIC_PLOTS = {
     "posterior_mmd": {
         **METRIC_PLOTS["posterior_mmd"],
@@ -353,8 +341,12 @@ def load_calibration_thresholds(
             elif config.run_suffix is None:
                 variant = "withMMD"
             else:
-                raise ValueError("Pass threshold_path for custom with-MMD training runs")
-            paths.add(BASE_DIR / f"calibration_outputs_100_{variant}" / "thresholds.csv")
+                raise ValueError(
+                    "Pass threshold_path for custom with-MMD training runs"
+                )
+            paths.add(
+                BASE_DIR / f"calibration_outputs_100_{variant}" / "thresholds.csv"
+            )
         thresholds = pd.concat(
             [pd.read_csv(path, keep_default_na=False) for path in sorted(paths)],
             ignore_index=True,
@@ -419,19 +411,21 @@ def load_calibration_thresholds(
     ]
     missing_metrics = sorted(set(threshold_columns).difference(wide.columns))
     if missing_metrics:
-        raise ValueError(f"Calibration thresholds are missing metrics: {missing_metrics}")
+        raise ValueError(
+            f"Calibration thresholds are missing metrics: {missing_metrics}"
+        )
     wide = wide.reset_index().rename(columns={"generating_model": "model"})
-    config_to_summary = {config: summary for summary, config in summary_to_config.items()}
+    config_to_summary = {
+        config: summary for summary, config in summary_to_config.items()
+    }
     wide["summary"] = wide["npe_configuration"].map(config_to_summary)
-    wide["log10_logml_error_lower_threshold"] = (
-        wide["signed_logml_error_lower_threshold"] / np.log(10.0)
-    )
-    wide["log10_logml_error_upper_threshold"] = (
-        wide["signed_logml_error_upper_threshold"] / np.log(10.0)
-    )
-    wide["log10_logml_error_median"] = (
-        wide["signed_logml_error_median"] / np.log(10.0)
-    )
+    wide["log10_logml_error_lower_threshold"] = wide[
+        "signed_logml_error_lower_threshold"
+    ] / np.log(10.0)
+    wide["log10_logml_error_upper_threshold"] = wide[
+        "signed_logml_error_upper_threshold"
+    ] / np.log(10.0)
+    wide["log10_logml_error_median"] = wide["signed_logml_error_median"] / np.log(10.0)
     output_columns = [
         "model",
         "summary",
@@ -522,8 +516,7 @@ def _attach_calibration_thresholds(
         low = output[lower_threshold_column]
         high = output[upper_threshold_column]
         output[f"normalized_{metric}_error"] = _normalize_metric(
-            metric,
-            output[value_column], output[median_column], low, high
+            metric, output[value_column], output[median_column], low, high
         )
         output[f"normalized_{metric}_error_low"] = _normalize_metric(
             metric, low, output[median_column], low, high
@@ -586,9 +579,9 @@ def diagnostic_classification_rows(
             low_column, high_column = bound_columns
             frame["error_lower_threshold"] = frame[low_column]
             frame["error_upper_threshold"] = frame[high_column]
-            frame["error_positive"] = frame[value_column].lt(
-                frame[low_column]
-            ) | frame[value_column].gt(frame[high_column])
+            frame["error_positive"] = frame[value_column].lt(frame[low_column]) | frame[
+                value_column
+            ].gt(frame[high_column])
         else:
             frame["error_lower_threshold"] = 0.0
             frame["error_upper_threshold"] = float(spec["threshold"])
@@ -721,17 +714,13 @@ def _pmp_view(
             axis=1,
         )
         gold = softmax(
-            output[
-                [f"gold_log_ml_{model}" for model in MODELS]
-            ].to_numpy(dtype=float),
+            output[[f"gold_log_ml_{model}" for model in MODELS]].to_numpy(dtype=float),
             axis=1,
         )
         for index, model in enumerate(MODELS):
             output[f"pmp_{model}"] = estimated[:, index]
             output[f"gold_pmp_{model}"] = gold[:, index]
-            output[f"signed_pmp_error_{model}"] = (
-                estimated[:, index] - gold[:, index]
-            )
+            output[f"signed_pmp_error_{model}"] = estimated[:, index] - gold[:, index]
         return output
     if pmp_source != "m1_m3" or tuple(models) != ("m1", "m3"):
         raise ValueError("m1_m3 PMP must be used with M1/M3")
@@ -768,7 +757,6 @@ def model_set_view(
 def _load_cached_frames(
     metric: str,
     summary_specs: SummarySpecs,
-    rho_normalization: str = "centered",
 ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
     diagnostics: dict[str, pd.DataFrame] = {}
     posteriors: dict[str, pd.DataFrame] = {}
@@ -783,24 +771,17 @@ def _load_cached_frames(
             raise FileNotFoundError(
                 "Missing cached diagnostics:\n" + "\n".join(missing)
             )
-        diagnostic = pd.read_csv(
-            paths["diagnostic"], keep_default_na=False
-        ).assign(summary=label)
-        references = load_references(reference_suite_path(config.summary_label))
+        diagnostic = pd.read_csv(paths["diagnostic"], keep_default_na=False).assign(
+            summary=label
+        )
         for model in MODELS:
-            median = float(references[model][metric]["median"])
-            diagnostic[f"dm_median_{model}"] = median
             diagnostic[f"rho_{model}"] = _normalize_distance(
                 diagnostic[f"d_{model}"],
-                median,
                 diagnostic[f"dm_high_{model}"],
-                method=rho_normalization,
             )
             diagnostic[f"rho_low_{model}"] = _normalize_distance(
                 diagnostic[f"dm_low_{model}"],
-                median,
                 diagnostic[f"dm_high_{model}"],
-                method=rho_normalization,
             )
         diagnostics[label] = diagnostic
         posteriors[label] = load_posterior_diagnostic(paths["posterior"]).assign(
@@ -814,13 +795,11 @@ def load_summary_dimension_data(
     models: tuple[str, ...] = MODELS,
     summary_specs: SummarySpecs = WITH_MMD_SUMMARY_SPECS,
     pmp_source: str | None = None,
-    rho_normalization: str = "centered",
 ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
     """Load existing diagnostic and posterior caches; never refit any model."""
     diagnostics, posteriors = _load_cached_frames(
         metric,
         summary_specs,
-        rho_normalization=rho_normalization,
     )
     source = pmp_source or _infer_pmp_source(models)
     diagnostics = {
@@ -1047,7 +1026,9 @@ def _summary_handles(
             markeredgecolor="black" if not show_line else overlay_colors[label],
             markeredgewidth=0.7,
             linewidth=2.0 if show_line else 0.0,
-            markersize=(8 if not show_line else 6) if markersize is None else markersize,
+            markersize=(8 if not show_line else 6)
+            if markersize is None
+            else markersize,
             label=label,
         )
         for label in overlay_order
@@ -1118,7 +1099,8 @@ def _scatter_source_median(
     median_y = pd.to_numeric(points[y_column], errors="coerce").median()
     if np.isfinite(median_x) and np.isfinite(median_y):
         ax.scatter(
-            [median_x], [median_y],
+            [median_x],
+            [median_y],
             s=150 if empirical else 55,
             marker=marker,
             color=color,
@@ -1145,32 +1127,48 @@ def _scatter_combined_sources(
         matched = simulated_points["model_matched"].fillna(False).astype(bool)
         for is_matched, group in simulated_points.groupby(matched, sort=False):
             ax.scatter(
-                group[x_column], group[y_column],
+                group[x_column],
+                group[y_column],
                 s=36 if is_matched else 20,
                 marker="^" if is_matched else "o",
                 facecolors=to_rgba(color, alpha=0.28 if is_matched else alpha),
-                edgecolors="none", linewidths=0.0, zorder=2,
+                edgecolors="none",
+                linewidths=0.0,
+                zorder=2,
             )
         for _, group in simulated_points.groupby(
             simulated_points["dataset"].astype("string"), observed=True, sort=True
         ):
             is_matched = group["model_matched"].fillna(False).astype(bool).all()
             _scatter_source_median(
-                ax, group, x_column, y_column, color,
-                marker="^" if is_matched else "o", empirical=False,
+                ax,
+                group,
+                x_column,
+                y_column,
+                color,
+                marker="^" if is_matched else "o",
+                empirical=False,
             )
     empirical_points = points.loc[empirical]
     if not empirical_points.empty:
         ax.scatter(
-            empirical_points[x_column], empirical_points[y_column],
-            s=60, marker="*",
+            empirical_points[x_column],
+            empirical_points[y_column],
+            s=60,
+            marker="*",
             facecolors=to_rgba(color, alpha=0.45),
             edgecolors=to_rgba("black", alpha=0.42),
-            linewidths=0.6, zorder=2.5,
+            linewidths=0.6,
+            zorder=2.5,
         )
         _scatter_source_median(
-            ax, empirical_points, x_column, y_column, color,
-            marker="*", empirical=True,
+            ax,
+            empirical_points,
+            x_column,
+            y_column,
+            color,
+            marker="*",
+            empirical=True,
         )
 
 
@@ -1190,28 +1188,43 @@ def _combined_source_handles(
         ):
             handles.append(
                 Line2D(
-                    [0], [0], marker=marker, color="none",
+                    [0],
+                    [0],
+                    marker=marker,
+                    color="none",
                     markerfacecolor="0.4" if median else to_rgba("0.4", alpha=alpha),
                     markeredgecolor="black" if median else "none",
                     markeredgewidth=0.8 if median else 1.0,
-                    markersize=size, label=label,
+                    markersize=size,
+                    label=label,
                 )
             )
     if points["dataset"].eq("empirical").any():
         handles.extend(
             [
                 Line2D(
-                    [0], [0], marker="*", color="none",
+                    [0],
+                    [0],
+                    marker="*",
+                    color="none",
                     markerfacecolor=to_rgba(
                         "0.65", alpha=empirical_legend_alpha if empirical_only else 0.45
                     ),
                     markeredgecolor=to_rgba("black", alpha=0.42),
-                    markeredgewidth=0.6, markersize=9, label="empirical datasets",
+                    markeredgewidth=0.6,
+                    markersize=9,
+                    label="empirical datasets",
                 ),
                 Line2D(
-                    [0], [0], marker="*", color="none", markerfacecolor="0.4",
-                    markeredgecolor="black", markeredgewidth=0.8,
-                    markersize=12, label="empirical median",
+                    [0],
+                    [0],
+                    marker="*",
+                    color="none",
+                    markerfacecolor="0.4",
+                    markeredgecolor="black",
+                    markeredgewidth=0.8,
+                    markersize=12,
+                    label="empirical median",
                 ),
             ]
         )
@@ -1285,7 +1298,9 @@ def _legend_layout(
     if model_count == 2 and summary_count == 3 and context_count == 3:
         summaries = handles[:summary_count]
         context = handles[summary_count:]
-        interleaved = [item for pair in zip(summaries, context, strict=True) for item in pair]
+        interleaved = [
+            item for pair in zip(summaries, context, strict=True) for item in pair
+        ]
         return interleaved, 3, 2
     columns = min(len(handles), 4 if model_count == 2 else 7)
     rows = int(np.ceil(len(handles) / columns))
@@ -1378,7 +1393,9 @@ def plot_rho_error_overlay(
     frac = LOWESS_FRAC[source_group] if loess_frac is None else loess_frac
     if combined and not empirical_only:
         fit_source = (
-            "simulated_and_empirical" if include_empirical_in_loess else "simulated_only"
+            "simulated_and_empirical"
+            if include_empirical_in_loess
+            else "simulated_only"
         )
         fractions = {"simulated_and_empirical": 1.0, "simulated_only": 1.0}
         if loess_frac_by_fit_source is not None:
@@ -1406,14 +1423,16 @@ def plot_rho_error_overlay(
         if value == "logml"
         else reference_data
     )
-    simulated_only_fit = combined and not empirical_only and not include_empirical_in_loess
+    simulated_only_fit = (
+        combined and not empirical_only and not include_empirical_in_loess
+    )
     fit_data = plot_data
     if simulated_only_fit:
         # Fit-only trimming uses the original simulated population, independently
         # of the combined trimming used for visible observations and medians.
-        fit_data = reference_data.loc[
-            reference_data["dataset"].ne("empirical")
-        ].dropna(subset=["rho", y_column])
+        fit_data = reference_data.loc[reference_data["dataset"].ne("empirical")].dropna(
+            subset=["rho", y_column]
+        )
         if value == "logml":
             fit_data = _central_interval(
                 fit_data, y_column, ["model", overlay_column], LOGML_CENTRAL_INTERVAL
@@ -1434,9 +1453,7 @@ def plot_rho_error_overlay(
         include=(1.0,),
     )
     shared_y = (
-        _limits(plot_data[y_column], include=all_thresholds)
-        if spec["sharey"]
-        else None
+        _limits(plot_data[y_column], include=all_thresholds) if spec["sharey"] else None
     )
     if value == "posterior_mmd" and shared_y is not None:
         shared_y = _nonnegative_plot_limits(shared_y[1])
@@ -1561,9 +1578,7 @@ def plot_rho_error_overlay(
             panel_limits = all_thresholds
             if panel_thresholds is not None:
                 panel_limits = tuple(
-                    value
-                    for values in panel_thresholds.values()
-                    for value in values
+                    value for values in panel_thresholds.values() for value in values
                 )
             panel_y_limits = _limits(panel[y_column], include=panel_limits)
             if value == "posterior_mmd":
@@ -1582,9 +1597,15 @@ def plot_rho_error_overlay(
         va="center",
         multialignment="center",
     )
-    source_title = "Simulated datasets" if source_group == "simulated" else "Empirical dataset"
+    source_title = (
+        "Simulated datasets" if source_group == "simulated" else "Empirical dataset"
+    )
     if combined:
-        source_title = "Empirical datasets" if empirical_only else "Simulated and empirical datasets"
+        source_title = (
+            "Empirical datasets"
+            if empirical_only
+            else "Simulated and empirical datasets"
+        )
     fig.suptitle(source_title, y=0.99, fontsize=12)
     summary_handles = _summary_handles(
         overlay_order,
@@ -1596,10 +1617,12 @@ def plot_rho_error_overlay(
     handles = list(summary_handles)
     handles.extend(
         _combined_source_handles(
-            plot_data, empirical_only=empirical_only,
+            plot_data,
+            empirical_only=empirical_only,
             empirical_legend_alpha=empirical_legend_alpha,
         )
-        if combined else _model_match_handles(plot_data)
+        if combined
+        else _model_match_handles(plot_data)
     )
     handles.append(
         Patch(
@@ -1661,7 +1684,6 @@ def run_summary_dimension_comparison(
     x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
     y_symlog_linthresh: float = 1.0,
     normalize_metrics: bool = True,
-    rho_normalization: str = "centered",
     filename_suffix: str | None = None,
     plot_style: str = "standard",
     show_loess: bool = True,
@@ -1677,7 +1699,6 @@ def run_summary_dimension_comparison(
     diagnostics, posteriors = cached_frames or _load_cached_frames(
         metric,
         summary_specs,
-        rho_normalization=rho_normalization,
     )
     data = prepare_rho_error_data(
         diagnostics,
@@ -1731,7 +1752,8 @@ def run_summary_dimension_comparison(
                 {"simulated": "simulated and empirical", "empirical": "empirical only"}[
                     source_group
                 ]
-                if plot_style == "combined" else source_group
+                if plot_style == "combined"
+                else source_group
             )
             manifest.append(
                 {
@@ -1770,7 +1792,6 @@ def run_comparison_pipeline(
     x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
     y_symlog_linthresh: float = 1.0,
     normalize_metrics: bool = True,
-    rho_normalization: str = "centered",
     filename_suffix: str | None = None,
     plot_style: str = "standard",
     show_loess: bool = True,
@@ -1785,8 +1806,7 @@ def run_comparison_pipeline(
         cached = _load_cached_frames(
             metric,
             summary_specs,
-            rho_normalization=rho_normalization,
-        )
+            )
         for name, models in model_sets.items():
             pmp_source = "four_model"
             comparisons[f"{name}_{metric}"] = run_summary_dimension_comparison(
@@ -1801,8 +1821,7 @@ def run_comparison_pipeline(
                 x_symlog_linthresh=x_symlog_linthresh,
                 y_symlog_linthresh=y_symlog_linthresh,
                 normalize_metrics=normalize_metrics,
-                rho_normalization=rho_normalization,
-                filename_suffix=filename_suffix,
+                        filename_suffix=filename_suffix,
                 plot_style=plot_style,
                 show_loess=show_loess,
                 show_empirical_only_loess=show_empirical_only_loess,
@@ -1829,7 +1848,6 @@ def run_calibrated_comparison_pipeline(
     x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
     y_symlog_linthresh: float = 1.0,
     normalize_metrics: bool = True,
-    rho_normalization: str = "centered",
     filename_suffix: str | None = None,
     plot_style: str = "standard",
     show_loess: bool = True,
@@ -1850,7 +1868,6 @@ def run_calibrated_comparison_pipeline(
         x_symlog_linthresh=x_symlog_linthresh,
         y_symlog_linthresh=y_symlog_linthresh,
         normalize_metrics=normalize_metrics,
-        rho_normalization=rho_normalization,
         filename_suffix=filename_suffix,
         plot_style=plot_style,
         show_loess=show_loess,
@@ -2126,7 +2143,6 @@ def load_visualization_data(
     models: tuple[str, ...] = VISUALIZATION_MODELS,
     sources: tuple[str, ...] = VISUALIZATION_SOURCES,
     posterior_mmd_column: str = "observed_mmd",
-    rho_normalization: str = "centered",
 ) -> pd.DataFrame:
     """Load participant-level diagnostics for the visualization suite."""
     if diagnostic not in DIAGNOSTICS:
@@ -2135,14 +2151,11 @@ def load_visualization_data(
         metric=diagnostic,
         models=models,
         summary_specs=summary_specs,
-        rho_normalization=rho_normalization,
     )
     frames = []
     for summary in VISUALIZATION_SUMMARY_LABELS:
         if posterior_mmd_column not in posterior_by_summary[summary]:
-            raise ValueError(
-                f"{summary} posterior cache has no {posterior_mmd_column}"
-            )
+            raise ValueError(f"{summary} posterior cache has no {posterior_mmd_column}")
         posterior_columns = ["dataset", "id", "model", posterior_mmd_column]
         posterior = posterior_by_summary[summary].loc[
             lambda frame: frame["model"].isin(models),
@@ -2515,12 +2528,11 @@ def _gold_pmp_color_norm(
             colors = np.asarray(colors, dtype=float)
             clipped = np.clip(colors, 0.0, 1.0)
             low_values = 10.0 ** (
-                log_floor
-                + (clipped / low_fraction) * (log_cutoff - log_floor)
+                log_floor + (clipped / low_fraction) * (log_cutoff - log_floor)
             )
-            high_values = cutoff + (
-                (clipped - low_fraction) / (1.0 - low_fraction)
-            ) * (1.0 - cutoff)
+            high_values = cutoff + ((clipped - low_fraction) / (1.0 - low_fraction)) * (
+                1.0 - cutoff
+            )
             return np.where(
                 clipped <= 0.0,
                 0.0,
@@ -2646,8 +2658,7 @@ def plot_gold_pmp_colored_pmp_error_grid(
     if missing:
         raise ValueError(f"Gold-PMP grid is missing columns: {missing}")
     plot_data = data.loc[
-        data["summary"].isin(VISUALIZATION_SUMMARY_LABELS)
-        & data["model"].isin(models)
+        data["summary"].isin(VISUALIZATION_SUMMARY_LABELS) & data["model"].isin(models)
     ].copy()
     if plot_data.empty:
         raise ValueError("Gold-PMP grid has no data to plot")
@@ -2722,9 +2733,11 @@ def plot_gold_pmp_colored_pmp_error_grid(
             if active_columns and not panel.empty:
                 values = []
                 for column_name in active_columns:
-                    unique = pd.to_numeric(
-                        panel[column_name], errors="coerce"
-                    ).dropna().unique()
+                    unique = (
+                        pd.to_numeric(panel[column_name], errors="coerce")
+                        .dropna()
+                        .unique()
+                    )
                     if len(unique) != 1:
                         raise ValueError(
                             f"Expected one {column_name} for {summary}/{model}; "
@@ -2898,8 +2911,7 @@ def plot_gold_pmp_colored_pmp_error_grid(
                 )
             )
             colorbar_label += (
-                "\n(log color spacing below "
-                f"{GOLD_PMP_ALL_MODEL_COLOR_CUTOFF:g})"
+                f"\n(log color spacing below {GOLD_PMP_ALL_MODEL_COLOR_CUTOFF:g})"
             )
         colorbar.set_label(colorbar_label, fontsize=16)
         colorbar.ax.tick_params(labelsize=14)
@@ -2975,9 +2987,7 @@ def generate_gold_pmp_lowess_grid(
         summary_specs,
         sources=("empirical",),
     )
-    empirical_data["logml_error"] = (
-        empirical_data["signed_logml_error"] / np.log(10.0)
-    )
+    empirical_data["logml_error"] = empirical_data["signed_logml_error"] / np.log(10.0)
     empirical_data["pmp_error"] = empirical_data["signed_pmp_error"]
     empirical_data = _attach_calibration_thresholds(
         empirical_data,
@@ -3014,17 +3024,8 @@ def display_gold_pmp_lowess_grid(
     """Display the generated empirical Gold-PMP LOWESS grid in a notebook."""
     from IPython.display import Image, Markdown, display
 
-    model_label = (
-        " — all four assumed models"
-        if tuple(models) == tuple(MODELS)
-        else ""
-    )
-    display(
-        Markdown(
-            "## Empirical PMP error vs. diagnostic $\\rho$"
-            f"{model_label}"
-        )
-    )
+    model_label = " — all four assumed models" if tuple(models) == tuple(MODELS) else ""
+    display(Markdown(f"## Empirical PMP error vs. diagnostic $\\rho${model_label}"))
     display(
         Image(filename=str(paths["png"]), width=width)
         if width
@@ -3038,7 +3039,6 @@ def load_calibrated_visualization_data(
     threshold_path: str | Path | None = None,
     sources: tuple[str, ...] = ("empirical",),
     models: tuple[str, ...] = VISUALIZATION_MODELS,
-    rho_normalization: str = "centered",
 ) -> pd.DataFrame:
     """Load observed metrics and attach matching well-specified thresholds."""
     data = load_visualization_data(
@@ -3047,19 +3047,18 @@ def load_calibrated_visualization_data(
         models=MODELS,
         sources=sources,
         posterior_mmd_column="observed_mmd",
-        rho_normalization=rho_normalization,
     )
     data = data.loc[data["model"].isin(models)].copy()
     if tuple(models) == tuple(MODELS):
         group_columns = ["summary", "dataset", "id"]
         model_counts = data.groupby(group_columns, observed=True)["model"].nunique()
         if not model_counts.eq(len(MODELS)).all():
-            raise ValueError("Four-model PMP data is missing one or more assumed models")
+            raise ValueError(
+                "Four-model PMP data is missing one or more assumed models"
+            )
         gold_sums = data.groupby(group_columns, observed=True)["gold_pmp"].sum()
         estimated_sums = (
-            data.assign(
-                estimated_pmp=data["gold_pmp"] + data["signed_pmp_error"]
-            )
+            data.assign(estimated_pmp=data["gold_pmp"] + data["signed_pmp_error"])
             .groupby(group_columns, observed=True)["estimated_pmp"]
             .sum()
         )
@@ -3091,7 +3090,6 @@ def generate_calibrated_gold_pmp_lowess_grid(
     x_symlog_linthresh: float = RHO_SYMLOG_LINTHRESH,
     y_symlog_linthresh: float = PMP_SYMLOG_LINTHRESH,
     normalize_metrics: bool = True,
-    rho_normalization: str = "centered",
 ) -> dict[str, Path]:
     """Generate the original empirical PMP grid with calibrated PMP cutoffs."""
     data = load_calibrated_visualization_data(
@@ -3099,7 +3097,6 @@ def generate_calibrated_gold_pmp_lowess_grid(
         summary_specs,
         threshold_path=threshold_path,
         models=models,
-        rho_normalization=rho_normalization,
     )
     root = (
         Path(output_root)
@@ -3112,10 +3109,7 @@ def generate_calibrated_gold_pmp_lowess_grid(
     return plot_gold_pmp_colored_pmp_error_grid(
         data,
         diagnostic,
-        root
-        / output_variant
-        / diagnostic
-        / f"12_{GOLD_PMP_GRID_KEY}{model_suffix}",
+        root / output_variant / diagnostic / f"12_{GOLD_PMP_GRID_KEY}{model_suffix}",
         models=models,
         threshold_columns=threshold_columns,
         value_column=value_column,
@@ -3158,12 +3152,24 @@ def _validate_diagnostic_notebook_thresholds(
     required = {"metric", "lower_quantile", "upper_quantile", "n_values"}
     missing = required.difference(thresholds.columns)
     if missing:
-        raise ValueError(f"Calibration thresholds are missing columns: {sorted(missing)}")
+        raise ValueError(
+            f"Calibration thresholds are missing columns: {sorted(missing)}"
+        )
     signed_tail = (1.0 - signed_error_coverage) / 2.0
     for metric, low, high, count in (
         ("posterior_mmd", 0.0, posterior_mmd_quantile, expected_calibration_datasets),
-        ("signed_logml_error", signed_tail, 1.0 - signed_tail, expected_calibration_datasets),
-        ("signed_pmp_error", signed_tail, 1.0 - signed_tail, len(MODELS) * expected_calibration_datasets),
+        (
+            "signed_logml_error",
+            signed_tail,
+            1.0 - signed_tail,
+            expected_calibration_datasets,
+        ),
+        (
+            "signed_pmp_error",
+            signed_tail,
+            1.0 - signed_tail,
+            len(MODELS) * expected_calibration_datasets,
+        ),
     ):
         rows = thresholds.loc[thresholds["metric"].eq(metric)]
         if rows.empty or not (
@@ -3209,7 +3215,10 @@ def run_diagnostic_notebook(
     Set ``refresh_thresholds=False`` to read the existing table without rewriting
     calibration results. Figure output roots can be redirected independently.
     """
-    from ..calibration.thresholds import CALIBRATION_VARIANTS, calculate_and_save_thresholds
+    from ..calibration.thresholds import (
+        CALIBRATION_VARIANTS,
+        calculate_and_save_thresholds,
+    )
 
     if metric not in DIAGNOSTICS:
         raise ValueError(f"Unknown diagnostic: {metric!r}; choose one of {DIAGNOSTICS}")
@@ -3228,15 +3237,20 @@ def run_diagnostic_notebook(
         "noMMD_rerun1": "without_mmd_rerun1",
     }[variant]
     threshold_path = (
-        Path(threshold_path) if threshold_path is not None
+        Path(threshold_path)
+        if threshold_path is not None
         else BASE_DIR / f"calibration_outputs_100_{variant}" / "thresholds.csv"
     )
     output_root = (
-        Path(output_root) if output_root is not None
-        else RESULT_DIR / "plots" / f"summary_diagnostics_{variant}_calibrated_thresholds"
+        Path(output_root)
+        if output_root is not None
+        else RESULT_DIR
+        / "plots"
+        / f"summary_diagnostics_{variant}_calibrated_thresholds"
     )
     overlay_output_root = (
-        Path(overlay_output_root) if overlay_output_root is not None
+        Path(overlay_output_root)
+        if overlay_output_root is not None
         else RESULT_DIR / "plots" / f"diagnostic_overlays_calibrated_{variant}"
     )
     if yscale is None:
@@ -3288,7 +3302,8 @@ def run_diagnostic_notebook(
     gold_pmp_paths = generate_calibrated_gold_pmp_lowess_grid(metric, **grid_options)
     all_model_paths = (
         generate_calibrated_gold_pmp_lowess_grid(metric, models=MODELS, **grid_options)
-        if not with_mmd else None
+        if not with_mmd
+        else None
     )
     return {
         "metric": metric,

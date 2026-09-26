@@ -1,0 +1,152 @@
+{
+  "generation": {
+    "schema_version": 1,
+    "seed": 2025,
+    "counts": {
+      "fit": 500,
+      "calibration": 500,
+      "validation": 500
+    },
+    "models": [
+      "m0",
+      "m1",
+      "m2",
+      "m3"
+    ],
+    "num_obs": 384,
+    "simulator_sha256": "23bd7a6f848c197e645bf67962cbaf5e0a9ccb207f6dc34aa0228527d50df560",
+    "conditions_sha256": "8d801f4e3542d6c5c495de3d35f7215550eadb9a2394d1695b280d5bc9dfe492",
+    "protocol": "per-model MT19937 seed+model_index; fit then calibration; validation reseeded at seed+1000000+model_index",
+    "dtype": "float32"
+  },
+  "files": {
+    "m0": {
+      "fit": {
+        "path": "m0/fit.npz",
+        "shape": [
+          500,
+          384,
+          2
+        ],
+        "file_sha256": "6771680e8681742659bc29cbf23b09607e2668389e56233cee2978278449137f",
+        "array_sha256": "1fd0b029a82a040661fef0bfcdb1fcf495c86fda1c65381315a0c5a8d3b77077"
+      },
+      "calibration": {
+        "path": "m0/calibration.npz",
+        "shape": [
+          500,
+          384,
+          2
+        ],
+        "file_sha256": "64db732cef6a158e4b70c28e3b090dc6d054791c95d751c1a823110809eb4fd7",
+        "array_sha256": "0b38c35ee6ee3513e76a63ea4b6e1eb7ca6146c4294ec4a252768169d5742004"
+      },
+      "validation": {
+        "path": "m0/validation.npz",
+        "shape": [
+          500,
+          384,
+          2
+        ],
+        "file_sha256": "5c7917136ebb102e538212bb8595c08cd2d2aa77c34a6441841f2cff26336bd9",
+        "array_sha256": "0f42a619cb70f99e9c0400dfb27f46afbc4b0271ffd7ff99cb6909a4a792de44"
+      }
+    },
+    "m1": {
+      "fit": {
+        "path": "m1/fit.npz",
+        "shape": [
+          500,
+          384,
+          2
+        ],
+        "file_sha256": "3eea7a57838dcc69a68468645535f3d7a4fc8ab18a0fbc7e7c8eb7715083dec6",
+        "array_sha256": "dc6a09ddda76b7ede08887a23a187135ad597bd48b11e9e56f0617a6a5af0429"
+      },
+      "calibration": {
+        "path": "m1/calibration.npz",
+        "shape": [
+          500,
+          384,
+          2
+        ],
+        "file_sha256": "fb6a783b0b425137e3ab6530c39f443beab343580c41cdaec56916386ab2b295",
+        "array_sha256": "1f43eea580bbb0e0f7dd88440c5084f784c46f0418066943d114d3f1327b4242"
+      },
+      "validation": {
+        "path": "m1/validation.npz",
+        "shape": [
+          500,
+          384,
+          2
+        ],
+        "file_sha256": "8c5d92b48d77a4321eda8e60183233cd4110ea8a64fe457ef968f894e2e4b598",
+        "array_sha256": "e5dd3414f9783d9a7d2531798a9abd6cfb0c909dbdb9fe418c8ceb591d71f004"
+      }
+    },
+    "m2": {
+      "fit": {
+        "path": "m2/fit.npz",
+        "shape": [
+          500,
+          384,
+          2
+        ],
+        "file_sha256": "42c8b38bd41adb1a63dd4ed3ef21beb380388c64427c07082c138868d547c9cd",
+        "array_sha256": "a79e5606b55e19a32a3b7ab8b6a2c41b344be5572a029f42be5e1ea7060bcda9"
+      },
+      "calibration": {
+        "path": "m2/calibration.npz",
+        "shape": [
+          500,
+          384,
+          2
+        ],
+        "file_sha256": "96f15b38582285853654010d07b6e40743624fd28d5e4b6c0b369deb4b78deb1",
+        "array_sha256": "747ee9fd562077b46e1fa7a59f7c9b9c83150b173c443fb5eb2dc3c0eda791dd"
+      },
+      "validation": {
+        "path": "m2/validation.npz",
+        "shape": [
+          500,
+          384,
+          2
+        ],
+        "file_sha256": "8282f44acf84f168bba53713482b3bb8482a4c2babdc858da2f19112ac3523e4",
+        "array_sha256": "d5f10984838d5d5e2e0d724fa8eff7b30a787bc851d3b373659354bdc66eed3a"
+      }
+    },
+    "m3": {
+      "fit": {
+        "path": "m3/fit.npz",
+        "shape": [
+          500,
+          384,
+          2
+        ],
+        "file_sha256": "ac12f8f4d095a93e34be3729688fe48cd2eee86035c8f63e3bc3ea54cb58d693",
+        "array_sha256": "ff74ca550aef740ff7b3cb2c6ec3ce34e0ee9c6d90225ae7631ea99d9c8a8e7f"
+      },
+      "calibration": {
+        "path": "m3/calibration.npz",
+        "shape": [
+          500,
+          384,
+          2
+        ],
+        "file_sha256": "f4e4bb92d14850419fe209692b4718cd8ea628d333a4d9ed29f45fa2c45e5a09",
+        "array_sha256": "c99d72af128c344116245698feb0fe4408527d601405b5f5d1a3baa2486b7ba5"
+      },
+      "validation": {
+        "path": "m3/validation.npz",
+        "shape": [
+          500,
+          384,
+          2
+        ],
+        "file_sha256": "47d4b597e7e97ed80388ded1ab38d9a44ebe0782923d9219d0ceadd186cfde79",
+        "array_sha256": "34b2f2bb81f037987887a382100cd339d1d17b53e8cd4581dcf3aabd361fcd51"
+      }
+    }
+  }
+}

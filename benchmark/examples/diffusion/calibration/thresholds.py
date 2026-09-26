@@ -127,9 +127,7 @@ def calculate_thresholds(
     _validate_input(frame)
 
     rows = []
-    for key, group in frame.groupby(
-        list(GROUP_COLUMNS), sort=False, dropna=False
-    ):
+    for key, group in frame.groupby(list(GROUP_COLUMNS), sort=False, dropna=False):
         metadata = dict(zip(GROUP_COLUMNS, key, strict=True))
         model_priors = {
             f"model_prior_{model}": float(
@@ -212,8 +210,7 @@ def calculate_and_save_thresholds(
     input_path = Path(input_path)
     if not input_path.exists():
         raise FileNotFoundError(
-            f"NPE-MCMC metrics not found: {input_path}. "
-            "Run pipeline.py metrics first."
+            f"NPE-MCMC metrics not found: {input_path}. Run pipeline.py metrics first."
         )
     frame = pd.read_csv(input_path, keep_default_na=False)
     thresholds = calculate_thresholds(
@@ -287,12 +284,8 @@ def main() -> None:
     args = _parse_args()
     root = args.calibration_root.resolve()
     input_path = (args.input or root / "per_dataset_metrics.csv").resolve()
-    thresholds_path = (
-        args.thresholds_output or root / "thresholds.csv"
-    ).resolve()
-    results_path = (
-        args.results_output or root / "per_dataset_results.csv"
-    ).resolve()
+    thresholds_path = (args.thresholds_output or root / "thresholds.csv").resolve()
+    results_path = (args.results_output or root / "per_dataset_results.csv").resolve()
     thresholds, results = calculate_and_save_thresholds(
         input_path=input_path,
         thresholds_path=thresholds_path,

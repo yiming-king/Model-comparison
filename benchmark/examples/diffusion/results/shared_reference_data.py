@@ -3,6 +3,7 @@
 This bank is separate from the observed data and the PMP error benchmark. Its
 fit/calibration/validation partitions are generated before any network is used.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -42,22 +43,29 @@ def write_json(path, data):
     temporary.replace(path)
 
 
-def ensure_shared_reference_data(*, root=None, n_fit=2000, n_calibration=2000,
-                                 n_density_validation=2000, seed=2025):
+def ensure_shared_reference_data(
+    *, root=None, n_fit=2000, n_calibration=2000, n_density_validation=2000, seed=2025
+):
     """Return a verified content-addressed manifest; never silently replace data."""
     from ..dataset import wagenmakers
     from ..simulators.rdm_4 import RDM
 
-    counts = {"fit": int(n_fit), "calibration": int(n_calibration),
-              "validation": int(n_density_validation)}
+    counts = {
+        "fit": int(n_fit),
+        "calibration": int(n_calibration),
+        "validation": int(n_density_validation),
+    }
     if any(count < 2 for count in counts.values()):
         raise ValueError("Each reference partition needs at least two datasets")
     bank = Path(root or DEFAULT_ROOT) / (
         f"seed{seed}_fit{n_fit}_cal{n_calibration}_validation{n_density_validation}"
     )
     generation = {
-        "schema_version": 1, "seed": int(seed), "counts": counts,
-        "models": list(MODELS), "num_obs": len(wagenmakers.conditions),
+        "schema_version": 1,
+        "seed": int(seed),
+        "counts": counts,
+        "models": list(MODELS),
+        "num_obs": len(wagenmakers.conditions),
         "simulator_sha256": file_sha256(BASE_DIR / "simulators/rdm_4.py"),
         "conditions_sha256": array_sha256(np.asarray(wagenmakers.conditions)),
         "protocol": "per-model MT19937 seed+model_index; fit then calibration; validation reseeded at seed+1000000+model_index",
@@ -67,7 +75,9 @@ def ensure_shared_reference_data(*, root=None, n_fit=2000, n_calibration=2000,
     if manifest_path.exists():
         manifest = json.loads(manifest_path.read_text())
         if manifest.get("generation") != generation:
-            raise ValueError(f"Shared reference generation changed: {manifest_path}; use a new root/seed")
+            raise ValueError(
+                f"Shared reference generation changed: {manifest_path}; use a new root/seed"
+            )
         for model in MODELS:
             for part in PARTITIONS:
                 entry = manifest["files"][model][part]
@@ -91,7 +101,9 @@ def ensure_shared_reference_data(*, root=None, n_fit=2000, n_calibration=2000,
                 if part == "validation":
                     np.random.seed(int(seed) + 1_000_000 + number)
                 data = simulator.sample(counts[part])
-                values = np.stack([data["rt"], data["conditions"]], axis=-1).astype(np.float32)
+                values = np.stack([data["rt"], data["conditions"]], axis=-1).astype(
+                    np.float32
+                )
                 if not np.isfinite(values).all():
                     raise ValueError(f"Nonfinite shared reference draw: {model}/{part}")
                 path = bank / model / f"{part}.npz"
@@ -101,8 +113,10 @@ def ensure_shared_reference_data(*, root=None, n_fit=2000, n_calibration=2000,
                     np.savez_compressed(stream, observations=values)
                 temporary.replace(path)
                 files[model][part] = {
-                    "path": str(path.relative_to(bank)), "shape": list(values.shape),
-                    "file_sha256": file_sha256(path), "array_sha256": array_sha256(values),
+                    "path": str(path.relative_to(bank)),
+                    "shape": list(values.shape),
+                    "file_sha256": file_sha256(path),
+                    "array_sha256": array_sha256(values),
                 }
     finally:
         np.random.set_state(state)
@@ -112,7 +126,10 @@ def ensure_shared_reference_data(*, root=None, n_fit=2000, n_calibration=2000,
 
 
 def load_reference_partition(manifest, model, part, *, bank=None):
-    path = Path(bank or manifest["bank_directory"]) / manifest["files"][model][part]["path"]
+    path = (
+        Path(bank or manifest["bank_directory"])
+        / manifest["files"][model][part]["path"]
+    )
     with np.load(path, allow_pickle=False) as archive:
         values = np.asarray(archive["observations"], dtype=np.float32)
     if array_sha256(values) != manifest["files"][model][part]["array_sha256"]:
@@ -125,13 +142,16 @@ def reference_data_identity(manifest, model=None):
     return {
         "bank_directory": manifest["bank_directory"],
         "generation": manifest["generation"],
-        "arrays": {m: {part: manifest["files"][m][part]["array_sha256"]
-                       for part in PARTITIONS} for m in models},
+        "arrays": {
+            m: {part: manifest["files"][m][part]["array_sha256"] for part in PARTITIONS}
+            for m in models
+        },
     }
 
 
 class SharedReferenceSimulator:
     """Replay fixed raw partitions in the order fit_reference_suite requests."""
+
     def __init__(self, manifest, model):
         self.manifest, self.model, self.position = manifest, model, 0
 
@@ -141,6 +161,8 @@ class SharedReferenceSimulator:
         part = PARTITIONS[self.position]
         values = load_reference_partition(self.manifest, self.model, part)
         if len(values) != count:
-            raise ValueError(f"{part} reference count is {len(values)}, requested {count}")
+            raise ValueError(
+                f"{part} reference count is {len(values)}, requested {count}"
+            )
         self.position += 1
         return {"rt": values[..., 0], "conditions": values[..., 1]}

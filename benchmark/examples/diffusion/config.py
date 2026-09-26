@@ -10,11 +10,12 @@ os.environ.setdefault("MPLCONFIGDIR", "/private/tmp/matplotlib")
 
 
 BASE_DIR = Path(__file__).resolve().parent
-APPROXIMATOR_DIR = BASE_DIR / "approximators" / "trained" / "indirect"
+NETWORK_DIR = BASE_DIR / "approximators" / "trained" / "indirect"
 HISTORY_DIR = BASE_DIR / "approximators" / "history" / "indirect"
 LOG_DIR = BASE_DIR / "approximators" / "logs" / "indirect"
 RESULT_DIR = BASE_DIR / "results"
 FIGURE_DIR = RESULT_DIR / "plots"
+
 
 MODELS = ("m0", "m1", "m2", "m3")
 MODEL_LABELS = {model: model.upper() for model in MODELS}
@@ -61,7 +62,7 @@ def get_name(model: str, approximation: str = "NPE", summary_label: str = "S30")
 
 
 def get_path(name: str) -> Path:
-    return APPROXIMATOR_DIR / f"{name}.keras"
+    return NETWORK_DIR / f"{name}.keras"
 
 
 def get_history_path(name: str) -> Path:
@@ -69,5 +70,5 @@ def get_history_path(name: str) -> Path:
 
 
 def ensure_dirs() -> None:
-    for path in (APPROXIMATOR_DIR, HISTORY_DIR, LOG_DIR, RESULT_DIR, FIGURE_DIR):
+    for path in (NETWORK_DIR, HISTORY_DIR, LOG_DIR, RESULT_DIR, FIGURE_DIR):
         path.mkdir(parents=True, exist_ok=True)

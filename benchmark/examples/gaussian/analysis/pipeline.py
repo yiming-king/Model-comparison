@@ -27,32 +27,32 @@ if __package__ in (None, ""):
 
 from ..config import (
     ASSUMED_MODELS,
-    CALIBRATION_ROOT,
     MODEL_SPECS,
     NETWORK_DIR,
     NetworkSet,
     RESULT_DIR,
     SOURCE_MODELS,
+    calibration_output_dir,
     configuration_tag,
     discover_network_sets,
 )
 from ..datasets.calculation import Calculation
-from ..approximators.legacy_npe import load_checkpoint
 from ..datasets.datasets import GetDatasets
 from scipy.special import softmax as softmax_stable
 from . import summry_diagnostic as diagnostic
 from .reference_datasets import (
-    ReferenceDatasets, ensure_reference_datasets, file_sha256,
-    load_or_fit_model_reference, _write_json as _write_reference_metadata,
+    ReferenceDatasets,
+    ensure_reference_datasets,
+    file_sha256,
+    load_or_fit_model_reference,
+    _write_json as _write_reference_metadata,
 )
 
 
 NONNEGATIVE_Y_MARGIN = 0.1
 THRESHOLD_LINEWIDTH = 1.8
 AXIS_SCALES = ("linear", "symlog")
-LOG10_LOGML_ERROR_LABEL = (
-    r"$\log_{10}\widehat{p}(y\mid M_j)-\log_{10}p(y\mid M_j)$"
-)
+LOG10_LOGML_ERROR_LABEL = r"$\log_{10}\widehat{p}(y\mid M_j)-\log_{10}p(y\mid M_j)$"
 
 
 @dataclass(frozen=True)
@@ -109,9 +109,10 @@ def _load_pickle(path: Path):
 def load_approximators(
     network_set: NetworkSet,
 ) -> dict[str, object]:
+    from ..approximators.legacy_npe import load_checkpoint
+
     return {
-        model: load_checkpoint(network_set.paths[model])
-        for model in ASSUMED_MODELS
+        model: load_checkpoint(network_set.paths[model]) for model in ASSUMED_MODELS
     }
 
 
@@ -313,6 +314,7 @@ def compute_ood_inference(
     """Compute NPE/analytical posterior, logML, indirect PMP, and direct PMP."""
     # Legacy inference helpers are unnecessary for the diagnostics-only stage.
     from ..direct.calculator import direct_get_probs, indirect_get_probs
+
     if num_samples <= 1:
         raise ValueError("num_samples must exceed one")
     diagnostic.quiet_bayesflow_progress()
@@ -456,26 +458,46 @@ def load_or_fit_references(
     for index, model in enumerate(ASSUMED_MODELS):
         model_path = path.with_name(f"{path.stem}_{model}.pkl")
         references[model] = load_or_fit_model_reference(
-            model_path, approximators[model], shared_reference_data, model,
-            checkpoint=checkpoint_paths[model], metrics=metrics, overwrite=overwrite,
-            settings={**reference_kwargs, "seed": int(reference_kwargs.get("seed", 2025)) + index},
+            model_path,
+            approximators[model],
+            shared_reference_data,
+            model,
+            checkpoint=checkpoint_paths[model],
+            metrics=metrics,
+            overwrite=overwrite,
+            settings={
+                **reference_kwargs,
+                "seed": int(reference_kwargs.get("seed", 2025)) + index,
+            },
         )
         # The helper validated the child's complete stored suite before returning
         # the requested subset. Preserve that suite in the bundle, never old
         # metrics read from a historical/unverified bundle.
         child_metadata = json.loads(model_path.with_suffix(".json").read_text())
         child_identity = child_metadata["identity"]
-        if (child_metadata["sha256"] != file_sha256(model_path)
-                or child_identity["shared_reference_datasets"] != shared_reference_data.identity
-                or child_identity["checkpoint_sha256"] != file_sha256(checkpoint_paths[model])):
+        if (
+            child_metadata["sha256"] != file_sha256(model_path)
+            or child_identity["shared_reference_datasets"]
+            != shared_reference_data.identity
+            or child_identity["checkpoint_sha256"]
+            != file_sha256(checkpoint_paths[model])
+        ):
             raise ValueError(f"Reference cache changed after validation: {model_path}")
         complete_references[model] = diagnostic.load_reference_suites(model_path)
-        model_paths[model] = {"path": str(model_path), "sha256": file_sha256(model_path)}
+        model_paths[model] = {
+            "path": str(model_path),
+            "sha256": file_sha256(model_path),
+        }
     diagnostic.save_reference_suites(complete_references, path)
-    _write_reference_metadata(path.with_suffix(".json"), {
-        "schema_version": 2, "shared_reference_datasets": shared_reference_data.identity,
-        "model_reference_files": model_paths, "sha256": file_sha256(path),
-    })
+    _write_reference_metadata(
+        path.with_suffix(".json"),
+        {
+            "schema_version": 2,
+            "shared_reference_datasets": shared_reference_data.identity,
+            "model_reference_files": model_paths,
+            "sha256": file_sha256(path),
+        },
+    )
     print(f"Saved reference suite: {path}")
     return references
 
@@ -540,9 +562,7 @@ def _threshold_lookup(
     pmp_high = "signed_pmp_error_threshold"
     if wide[pmp_low].gt(wide[pmp_high]).any():
         raise ValueError(f"Calibration lower threshold must not exceed {pmp_high}")
-    wide["signed_pmp_error_degenerate_interval"] = wide[pmp_low].eq(
-        wide[pmp_high]
-    )
+    wide["signed_pmp_error_degenerate_interval"] = wide[pmp_low].eq(wide[pmp_high])
     return wide.reset_index().rename(columns={"generating_model": "assumed_model"})
 
 
@@ -710,14 +730,14 @@ def attach_calibrated_errors(
         validate="many_to_one",
     )
     logml["log10_logml_error"] = logml["signed_logml_error"] / np.log(10.0)
-    logml["log10_logml_error_lower_threshold"] = (
-        logml["signed_logml_error_lower_threshold"] / np.log(10.0)
-    )
-    logml["log10_logml_error_upper_threshold"] = (
-        logml["signed_logml_error_threshold"] / np.log(10.0)
-    )
-    logml["log10_logml_error_median"] = (
-        logml["signed_logml_error_median"] / np.log(10.0)
+    logml["log10_logml_error_lower_threshold"] = logml[
+        "signed_logml_error_lower_threshold"
+    ] / np.log(10.0)
+    logml["log10_logml_error_upper_threshold"] = logml[
+        "signed_logml_error_threshold"
+    ] / np.log(10.0)
+    logml["log10_logml_error_median"] = logml["signed_logml_error_median"] / np.log(
+        10.0
     )
     logml["normalized_logml_error"] = _normalize_metric(
         "logml",
@@ -756,9 +776,7 @@ def attach_calibrated_errors(
     ).copy()
     indexed = thresholds.set_index("assumed_model")
     for model in ASSUMED_MODELS:
-        lower_threshold = float(
-            indexed.loc[model, "signed_pmp_error_lower_threshold"]
-        )
+        lower_threshold = float(indexed.loc[model, "signed_pmp_error_lower_threshold"])
         upper_threshold = float(indexed.loc[model, "signed_pmp_error_threshold"])
         pmp[f"pmp_error_lower_threshold_{model}"] = lower_threshold
         pmp[f"pmp_error_upper_threshold_{model}"] = upper_threshold
@@ -813,9 +831,7 @@ def save_metric_frames(
     )
     posterior, logml, pmp = attach_calibrated_errors(posterior, logml, pmp, thresholds)
     for frame in (posterior, logml):
-        frame["rho"] = (frame["d_M"] - frame["dm_median"]) / (
-            frame["dm_high"] - frame["dm_median"]
-        )
+        frame["rho"] = frame["d_M"] / frame["dm_high"]
         frame["diagnostic"] = metric
         frame["configuration"] = configuration
         frame["network_tag"] = network_set.network_tag
@@ -846,7 +862,6 @@ def _pmp_plot_long(pmp: pd.DataFrame) -> pd.DataFrame:
                 "id": pmp["id"],
                 "assumed_model": model,
                 "d_M": pmp[f"d_{model}"],
-                "dm_median": pmp[f"dm_median_{model}"],
                 "dm_low": pmp[f"dm_low_{model}"],
                 "dm_high": pmp[f"dm_high_{model}"],
                 "plot_error": pmp[f"signed_pmp_error_npe_{model}"],
@@ -854,9 +869,7 @@ def _pmp_plot_long(pmp: pd.DataFrame) -> pd.DataFrame:
                 "plot_error_high": pmp[f"pmp_error_upper_threshold_{model}"],
             }
         )
-        frame["rho"] = (frame["d_M"] - frame["dm_median"]) / (
-            frame["dm_high"] - frame["dm_median"]
-        )
+        frame["rho"] = frame["d_M"] / frame["dm_high"]
         frames.append(frame)
     return pd.concat(frames, ignore_index=True)
 
@@ -879,12 +892,7 @@ def _plot_normalized_error_grid(
     fig, axes = plt.subplots(1, len(ASSUMED_MODELS), figsize=(20, 5), sharey=True)
     for ax, model in zip(np.atleast_1d(axes), ASSUMED_MODELS, strict=True):
         panel = frame.loc[frame["assumed_model"].eq(model)]
-        rho_low = float(
-            (
-                (panel["dm_low"] - panel["dm_median"])
-                / (panel["dm_high"] - panel["dm_median"])
-            ).median()
-        )
+        rho_low = float((panel["dm_low"] / panel["dm_high"]).median())
         error_low = float(panel[low_column].median()) if low_column is not None else 0.0
         error_high = (
             float(panel[high_column].median()) if high_column is not None else 1.0
@@ -1087,33 +1095,15 @@ def load_cached_metric_frames(
     frames = {
         name: pd.read_csv(path, keep_default_na=False) for name, path in files.items()
     }
-    if metric in {"l2", "linf"}:
-        # Older L2/Linf notebooks defined rho as d / d_high and did not always
-        # persist a reference median. A zero center reproduces that definition:
-        # (d - median) / (high - median) = d / high.
-        for name in ("posterior", "logml"):
-            if "dm_median" not in frames[name]:
-                frames[name]["dm_median"] = 0.0
-        for model in ASSUMED_MODELS:
-            column = f"dm_median_{model}"
-            if column not in frames["pmp"]:
-                frames["pmp"][column] = 0.0
     for name in ("posterior", "logml"):
         frame = frames[name]
-        if "rho" not in frame and {"d_M", "dm_median", "dm_high"}.issubset(
-            frame.columns
-        ):
-            frame["rho"] = (frame["d_M"] - frame["dm_median"]) / (
-                frame["dm_high"] - frame["dm_median"]
-            )
+        if {"d_M", "dm_high"}.issubset(frame.columns):
+            frame["rho"] = frame["d_M"] / frame["dm_high"]
     can_attach_thresholds = (
         {"assumed_model", "posterior_mmd"}.issubset(frames["posterior"].columns)
-        and {"assumed_model", "signed_logml_error"}.issubset(
-            frames["logml"].columns
-        )
+        and {"assumed_model", "signed_logml_error"}.issubset(frames["logml"].columns)
         and all(
-            f"signed_pmp_error_npe_{model}" in frames["pmp"]
-            for model in ASSUMED_MODELS
+            f"signed_pmp_error_npe_{model}" in frames["pmp"] for model in ASSUMED_MODELS
         )
     )
     if can_attach_thresholds:
@@ -1129,7 +1119,7 @@ def load_cached_metric_frames(
         network_set = matches[0]
         configuration = configuration_tag(network_set.data_dim, network_set.num_obs)
         thresholds = _threshold_lookup(
-            CALIBRATION_ROOT / configuration / "thresholds.csv",
+            calibration_output_dir(configuration) / "thresholds.csv",
             configuration,
             network_set,
         )
@@ -1217,7 +1207,7 @@ def main() -> None:
             "--result-dir is only valid when exactly one summary network is selected"
         )
     threshold_path = (
-        args.threshold_path or CALIBRATION_ROOT / configuration / "thresholds.csv"
+        args.threshold_path or calibration_output_dir(configuration) / "thresholds.csv"
     )
     metrics = tuple(dict.fromkeys(args.metrics))
     for summary_index, network_set in enumerate(network_sets):
@@ -1248,8 +1238,11 @@ def main() -> None:
         reference_path = output_root / f"reference_suite_{network_set.network_tag}.pkl"
         approximators = load_approximators(network_set)
         shared_data = ensure_reference_datasets(
-            network_set.data_dim, network_set.num_obs, n_fit=args.n_fit,
-            n_calibration=args.n_calibration, n_density_validation=args.n_density_validation,
+            network_set.data_dim,
+            network_set.num_obs,
+            n_fit=args.n_fit,
+            n_calibration=args.n_calibration,
+            n_density_validation=args.n_density_validation,
             seed=args.seed,
         )
         references = load_or_fit_references(
@@ -1286,14 +1279,24 @@ def main() -> None:
                 output_root / metric / "posterior_distance_frame.csv"
                 for metric in dict.fromkeys(("l2", *metrics, "linf", "mmd", "density"))
             ]
-            cached_posterior_path = next((cached for cached in cached_posterior_paths if cached.exists()), None)
+            cached_posterior_path = next(
+                (cached for cached in cached_posterior_paths if cached.exists()), None
+            )
             if cached_posterior_path is None:
-                raise FileNotFoundError("Cached posterior errors are required to refresh diagnostics without rerunning inference")
+                raise FileNotFoundError(
+                    "Cached posterior errors are required to refresh diagnostics without rerunning inference"
+                )
             posterior_errors = pd.read_csv(cached_posterior_path)
-        posterior_errors = posterior_errors[[
-            "source_model", "id", "assumed_model", "posterior_mmd",
-            "posterior_mean_rmse", "n_posterior_samples",
-        ]].copy()
+        posterior_errors = posterior_errors[
+            [
+                "source_model",
+                "id",
+                "assumed_model",
+                "posterior_mmd",
+                "posterior_mean_rmse",
+                "n_posterior_samples",
+            ]
+        ].copy()
         for metric in metrics:
             metric_output_dir = output_root / metric
             posterior_errors = save_metric_frames(
@@ -1305,14 +1308,22 @@ def main() -> None:
                 posterior_errors,
                 thresholds,
             )
-            _write_reference_metadata(metric_output_dir / "reference_provenance.json", {
-                "schema_version": 2, "shared_reference_datasets": shared_data.identity,
-                "reference_suite_sha256": file_sha256(reference_path),
-                "derived_csv_sha256": {
-                    name: file_sha256(metric_output_dir / name)
-                    for name in ("posterior_distance_frame.csv", "logml_distance_frame.csv", "pmp_ambiguity_frame.csv")
+            _write_reference_metadata(
+                metric_output_dir / "reference_provenance.json",
+                {
+                    "schema_version": 2,
+                    "shared_reference_datasets": shared_data.identity,
+                    "reference_suite_sha256": file_sha256(reference_path),
+                    "derived_csv_sha256": {
+                        name: file_sha256(metric_output_dir / name)
+                        for name in (
+                            "posterior_distance_frame.csv",
+                            "logml_distance_frame.csv",
+                            "pmp_ambiguity_frame.csv",
+                        )
+                    },
                 },
-            })
+            )
             if args.plots:
                 generate_calibrated_plots(metric_output_dir)
 

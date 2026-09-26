@@ -1,13 +1,17 @@
 {
-  "created_at_utc": "2026-09-22T10:39:40.338323+00:00",
+  "created_at_utc": "2026-09-25T14:49:31.824002+00:00",
   "identity": {
-    "schema_version": 1,
+    "schema_version": 3,
     "loss_function": "logistic",
     "checkpoint": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/approximators/trained/direct/direct_logistic.keras",
-    "checkpoint_sha256": "81bd6d03f69abde528ebc21f45b0a21ed5d520af1c4ef483c27f3bd67bbf6bfb",
+    "checkpoint_sha256": "3d9662f6810b3f6b0d894bee41b9726995ec8def103996959d19085e5912b8ae",
     "num_obs": 384,
     "summary_dim": 12,
     "benchmark_directory": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/calibration_reference_100",
+    "indirect_gold_metrics": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/diffusion/calibration_outputs_100_withMMD/per_dataset_metrics.csv",
+    "indirect_gold_sha256": "87085999e838fef04517469473672f04c30e2f365e8f271df8d59924a8236350",
+    "calibration_helper_sha256": "785caa6b8da5b742a5a9579ac31b0983a0df8a22d7e9d71ca066bc54ad272d01",
+    "expected_per_model": 100,
     "benchmark_sha256": {
       "dataset_manifest.csv": "7189cf2eb4c805100f97156a52ae859f2a59c2cd16ccfebaaf7cbe73bcfeb212",
       "datasets/m0/true_parameters.csv": "0d39f4c8affe2af57f71a00c4abb79ba85dbdabe6f8a7e78965d772ba30a5919",
@@ -460,12 +464,12 @@
       0.25
     ],
     "signed_error_coverage": 0.9,
-    "implementation_sha256": "6ba625bd31f9c90dabe9972f043c3c15c104c1c3da37f8a9e42e5e8aa80cbc62"
+    "implementation_sha256": "0bd594e84c86d7d12ff21cf4ffb68db0454e1d9974d241e2b015fa16cb4b9b36"
   },
   "output_sha256": {
-    "thresholds": "49d86a8159e53ec8eff5b2c04c8d0d20316c6e6e71285aa600f9202e61735ead",
-    "per_dataset_metrics": "b89b48f036868fb0b4f3c3af96eba889e78bbb66d72e082903f2503f9ee17b29",
-    "per_dataset_results": "a271343693df2ecafa1e3527297bd4b1f13a04b21fc9cd9bb0944a03e5d60486"
+    "thresholds": "78a35d6090c0de849d44893e6ba74ddaa9bd7ad374337fc7fd360ba185011ba5",
+    "per_dataset_metrics": "da07f7e30ff8fc0707f32d551e7905616184e1f31f5d9e82d7eb69170e4a0dfc",
+    "per_dataset_results": "8ba7ce371156b00c0a14ebeccf3d12c643099af4681b2ea4452083d704981b27"
   },
   "num_datasets": 400,
   "datasets_per_generating_model": {
@@ -481,8 +485,8 @@
     "m3": 100
   },
   "dataset_policy": "exact saved indirect benchmark observations reused without regeneration",
-  "gold_standard": "saved MCMC bridge-sampling evidence with equal model prior",
-  "aggregation": "all_four_pmp_components_from_all_candidate_converged_datasets",
+  "gold_standard": "indirect calibration's saved MCMC bridge-sampling PMP vector",
+  "aggregation": "one signed PMP error interval per candidate model across all saved datasets",
   "not_applicable": [
     "posterior_mmd",
     "signed_logml_error"

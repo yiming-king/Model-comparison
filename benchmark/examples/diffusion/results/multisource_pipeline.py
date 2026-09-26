@@ -35,8 +35,11 @@ from .summary_diagnostic import (
 
 
 from .shared_reference_data import (
-    ensure_shared_reference_data, reference_data_identity, file_sha256,
-    array_sha256, write_json,
+    ensure_shared_reference_data,
+    reference_data_identity,
+    file_sha256,
+    array_sha256,
+    write_json,
 )
 from .shared_reference_fitting import DEFAULT_SETTINGS, load_or_fit_shared_reference
 
@@ -97,26 +100,43 @@ def load_or_fit_reference_suite(
     settings = {**DEFAULT_SETTINGS, **(reference_kwargs or {})}
     root = settings.pop("shared_reference_root", None)
     shared = ensure_shared_reference_data(
-        root=root, **{key: settings[key] for key in ("n_fit", "n_calibration", "n_density_validation", "seed")},
+        root=root,
+        **{
+            key: settings[key]
+            for key in ("n_fit", "n_calibration", "n_density_validation", "seed")
+        },
     )
     path = reference_suite_path(config.summary_label)
     references, candidate_hashes = {}, {}
     for model in MODELS:
         candidate_path = path.parent / f"{path.stem}_models" / f"{model}.pkl"
         references[model] = load_or_fit_shared_reference(
-            approximators[model], checkpoint=get_path(get_name(model, summary_label=config.summary_label)),
-            model=model, owner=f"indirect_{config.summary_label}", path=candidate_path,
-            manifest=shared, metrics=metrics, settings=settings, overwrite=overwrite,
+            approximators[model],
+            checkpoint=get_path(get_name(model, summary_label=config.summary_label)),
+            model=model,
+            owner=f"indirect_{config.summary_label}",
+            path=candidate_path,
+            manifest=shared,
+            metrics=metrics,
+            settings=settings,
+            overwrite=overwrite,
         )
         candidate_hashes[model] = file_sha256(candidate_path)
     identity = {
-        "schema_version": 2, "summary_configuration": config.summary_label,
+        "schema_version": 2,
+        "summary_configuration": config.summary_label,
         "shared_reference_data": reference_data_identity(shared),
-        "candidate_sha256": candidate_hashes, "metrics": list(metrics), "settings": settings,
+        "candidate_sha256": candidate_hashes,
+        "metrics": list(metrics),
+        "settings": settings,
     }
     metadata_path = path.with_suffix(".json")
     cached = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
-    if not (path.exists() and cached.get("identity") == identity and cached.get("sha256") == file_sha256(path)):
+    if not (
+        path.exists()
+        and cached.get("identity") == identity
+        and cached.get("sha256") == file_sha256(path)
+    ):
         temporary = path.with_suffix(".pkl.tmp")
         save_references(references, temporary)
         temporary.replace(path)
@@ -157,9 +177,15 @@ def compute_all_observed_summary_diagnostics(
     frames = {metric: [] for metric in metrics}
     for dataset in OBSERVED_DATASETS:
         y, ids = load_observed_dataset(dataset)
-        dataset_results = results.loc[results["dataset"].eq(dataset)].reset_index(drop=True)
-        if dataset_results["id"].duplicated().any() or set(dataset_results["id"]) != set(ids):
-            raise ValueError(f"Observed inference/diagnostic IDs disagree for {dataset}")
+        dataset_results = results.loc[results["dataset"].eq(dataset)].reset_index(
+            drop=True
+        )
+        if dataset_results["id"].duplicated().any() or set(
+            dataset_results["id"]
+        ) != set(ids):
+            raise ValueError(
+                f"Observed inference/diagnostic IDs disagree for {dataset}"
+            )
         lookup = {dataset_id: i for i, dataset_id in enumerate(ids)}
         y = y[[lookup[dataset_id] for dataset_id in dataset_results["id"]]]
         suite = add_summary_diagnostic_suite(
@@ -322,7 +348,11 @@ def compute_or_load_all_observed_suite(
     )
 
     diagnostics = ensure_observed_summary_diagnostics(
-        config, results, approximators, references, metrics=metrics,
+        config,
+        results,
+        approximators,
+        references,
+        metrics=metrics,
         overwrite=recompute or recompute_references,
     )
 
@@ -334,43 +364,72 @@ def compute_or_load_all_observed_suite(
     }
 
 
-def ensure_observed_summary_diagnostics(config, results, approximators, references,
-                                        metrics=REFERENCE_METRICS, overwrite=False):
+def ensure_observed_summary_diagnostics(
+    config,
+    results,
+    approximators,
+    references,
+    metrics=REFERENCE_METRICS,
+    overwrite=False,
+):
     """Refresh only summary diagnostics when reference/data/checkpoint identity changes."""
     tag = config.summary_label
     reference_path = reference_suite_path(tag)
     reference_meta = reference_path.with_suffix(".json")
     if not reference_meta.exists():
-        raise ValueError("References lack shared-data provenance; fit shared references first")
+        raise ValueError(
+            "References lack shared-data provenance; fit shared references first"
+        )
     reference_info = json.loads(reference_meta.read_text())
     if reference_info.get("sha256") != file_sha256(reference_path):
         raise ValueError("Reference suite hash differs from its provenance")
     observed_identity = {}
     for dataset in OBSERVED_DATASETS:
         y, ids = load_observed_dataset(dataset)
-        observed_identity[dataset] = {"ids": list(ids), "array_sha256": array_sha256(np.asarray(y, dtype=np.float32))}
+        observed_identity[dataset] = {
+            "ids": list(ids),
+            "array_sha256": array_sha256(np.asarray(y, dtype=np.float32)),
+        }
     identity = {
-        "schema_version": 2, "reference_sha256": reference_info["sha256"],
+        "schema_version": 2,
+        "reference_sha256": reference_info["sha256"],
         "reference_identity": reference_info["identity"],
         "results_sha256": file_sha256(results_path(tag)),
-        "observations": observed_identity, "metrics": list(metrics),
+        "observations": observed_identity,
+        "metrics": list(metrics),
         "implementation_sha256": file_sha256(Path(__file__)),
-        "diagnostic_implementation_sha256": file_sha256(Path(__file__).with_name("summary_diagnostic.py")),
+        "diagnostic_implementation_sha256": file_sha256(
+            Path(__file__).with_name("summary_diagnostic.py")
+        ),
     }
     paths = {metric: diagnostic_path(tag, metric) for metric in metrics}
     metadata_path = NPE_RESULT_DIR / f"npe_{tag}_all_observed_diagnostics.metadata.json"
     cached = json.loads(metadata_path.read_text()) if metadata_path.exists() else {}
-    if (not overwrite and all(path.exists() for path in paths.values())
-            and cached.get("identity") == identity
-            and cached.get("output_sha256") == {metric: file_sha256(path) for metric, path in paths.items()}):
-        return {metric: pd.read_csv(path, keep_default_na=False) for metric, path in paths.items()}
-    diagnostics = compute_all_observed_summary_diagnostics(results, approximators, references, metrics=metrics)
+    if (
+        not overwrite
+        and all(path.exists() for path in paths.values())
+        and cached.get("identity") == identity
+        and cached.get("output_sha256")
+        == {metric: file_sha256(path) for metric, path in paths.items()}
+    ):
+        return {
+            metric: pd.read_csv(path, keep_default_na=False)
+            for metric, path in paths.items()
+        }
+    diagnostics = compute_all_observed_summary_diagnostics(
+        results, approximators, references, metrics=metrics
+    )
     for metric, frame in diagnostics.items():
         save_diagnostic(frame, paths[metric])
-    write_json(metadata_path, {
-        "identity": identity,
-        "output_sha256": {metric: file_sha256(path) for metric, path in paths.items()},
-    })
+    write_json(
+        metadata_path,
+        {
+            "identity": identity,
+            "output_sha256": {
+                metric: file_sha256(path) for metric, path in paths.items()
+            },
+        },
+    )
     return diagnostics
 
 

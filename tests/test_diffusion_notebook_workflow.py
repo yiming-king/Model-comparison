@@ -4,13 +4,20 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from benchmark.examples.diffusion.results import summary_dimension_comparison as comparison
+from benchmark.examples.diffusion.results import (
+    summary_dimension_comparison as comparison,
+)
 
 
 def _threshold_table(dataset_count=100):
     return pd.DataFrame(
         [
-            {"metric": metric, "lower_quantile": low, "upper_quantile": high, "n_values": count}
+            {
+                "metric": metric,
+                "lower_quantile": low,
+                "upper_quantile": high,
+                "n_values": count,
+            }
             for metric, low, high, count in (
                 ("posterior_mmd", 0.0, 0.95, dataset_count),
                 ("signed_logml_error", 0.05, 0.95, dataset_count),
@@ -55,9 +62,13 @@ def test_notebook_workflow_keeps_training_run_and_figure_layout_together(
     assert {config.run_suffix for config in configs} == {None if with_mmd else variant}
     assert len(grid_calls) == (1 if with_mmd else 2)
     expected_grid_variant = {
-        "withMMD": "with_mmd", "noMMD": "without_mmd", "noMMD_rerun1": "without_mmd_rerun1"
+        "withMMD": "with_mmd",
+        "noMMD": "without_mmd",
+        "noMMD_rerun1": "without_mmd_rerun1",
     }[variant]
-    assert {options["output_variant"] for _, options in grid_calls} == {expected_grid_variant}
+    assert {options["output_variant"] for _, options in grid_calls} == {
+        expected_grid_variant
+    }
     # The comparison's logML scale must not change the independent PMP grid scale.
     assert all("y_symlog_linthresh" not in options for _, options in grid_calls)
     if not with_mmd:
@@ -71,7 +82,9 @@ def test_notebook_refuses_old_calibration_before_rendering(tmp_path, monkeypatch
     def unexpected_plot(**kwargs):
         pytest.fail("Plotting must not start with the wrong calibration sample")
 
-    monkeypatch.setattr(comparison, "run_calibrated_comparison_pipeline", unexpected_plot)
+    monkeypatch.setattr(
+        comparison, "run_calibrated_comparison_pipeline", unexpected_plot
+    )
     with pytest.raises(ValueError, match="100 calibration values"):
         comparison.run_diagnostic_notebook(
             "density", threshold_path=threshold_path, refresh_thresholds=False
@@ -122,21 +135,38 @@ def test_combined_plot_keeps_empirical_points_when_excluded_from_loess(
 
     monkeypatch.setattr(comparison, "_lowess_curve", fit)
     monkeypatch.setattr(
-        comparison.plt.Figure, "savefig", lambda self, *args, **kwargs: figures.append(self)
+        comparison.plt.Figure,
+        "savefig",
+        lambda self, *args, **kwargs: figures.append(self),
     )
     comparison.plot_rho_error_overlay(
-        data, ("m0",), "posterior_mmd", "simulated", tmp_path / "simulated" / "plot.png",
-        diagnostic="density", overlay_order=("S=D",), plot_style="combined",
-        include_empirical_in_loess=include_empirical, xscale="linear",
+        data,
+        ("m0",),
+        "posterior_mmd",
+        "simulated",
+        tmp_path / "simulated" / "plot.png",
+        diagnostic="density",
+        overlay_order=("S=D",),
+        plot_style="combined",
+        include_empirical_in_loess=include_empirical,
+        xscale="linear",
     )
 
     pd.testing.assert_frame_equal(data, original)
-    np.testing.assert_allclose(fits[0][0], data["rho"] if include_empirical else data["rho"][:4])
+    np.testing.assert_allclose(
+        fits[0][0], data["rho"] if include_empirical else data["rho"][:4]
+    )
     axes = figures[0].axes[0]
-    offsets = np.concatenate([np.asarray(collection.get_offsets()) for collection in axes.collections])
+    offsets = np.concatenate(
+        [np.asarray(collection.get_offsets()) for collection in axes.collections]
+    )
     assert np.any(np.all(np.isclose(offsets, [5.0, 8.0]), axis=1))
     # Each simulated source has its own median, including contamination variants.
     medians = np.concatenate(
-        [np.asarray(collection.get_offsets()) for collection in axes.collections if collection.get_zorder() == 4]
+        [
+            np.asarray(collection.get_offsets())
+            for collection in axes.collections
+            if collection.get_zorder() == 4
+        ]
     )
     assert set(map(tuple, np.round(medians, 8))) == {(0.15, 1.5), (0.35, 3.5)}

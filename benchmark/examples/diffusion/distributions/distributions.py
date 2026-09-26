@@ -17,7 +17,9 @@ def _alpha_by_trial(parameters: Tensor, condition: Tensor, model: str) -> Tensor
         return ops.stack([alpha, alpha], axis=-1)
 
     if model == "m1":
-        alpha = ops.where(condition > 0.5, ops.exp(parameters[..., 1]), ops.exp(parameters[..., 0]))
+        alpha = ops.where(
+            condition > 0.5, ops.exp(parameters[..., 1]), ops.exp(parameters[..., 0])
+        )
         return ops.stack([alpha, alpha], axis=-1)
 
     if model == "m2":
@@ -42,7 +44,9 @@ class Prior(Distribution):
         samples = ops.cast(samples, "float32")
         n_alpha = N_ALPHA[self.model]
         alpha = ops.sum(normal_lpdf(samples[:, :n_alpha], mu=0.0, sigma=0.5), axis=-1)
-        nu = ops.sum(normal_lpdf(samples[:, n_alpha : n_alpha + 2], mu=0.0, sigma=0.5), axis=-1)
+        nu = ops.sum(
+            normal_lpdf(samples[:, n_alpha : n_alpha + 2], mu=0.0, sigma=0.5), axis=-1
+        )
         tau = normal_lpdf(samples[:, n_alpha + 2], mu=0.0, sigma=1.0)
         return alpha + nu + tau
 
@@ -70,5 +74,10 @@ class Likelihood(Distribution):
         alpha = _alpha_by_trial(parameters, condition, self.model)
         nu = ops.exp(parameters[..., n_alpha : n_alpha + 2])
         tau = expit(parameters[..., n_alpha + 2])
-        trial_log_prob = rdm_lpdf(rt=rt,alpha=alpha,nu=nu,tau=tau,)
-        return (ops.sum(trial_log_prob, axis=-1)+ ops.log1p(-tau[:, 0]))
+        trial_log_prob = rdm_lpdf(
+            rt=rt,
+            alpha=alpha,
+            nu=nu,
+            tau=tau,
+        )
+        return ops.sum(trial_log_prob, axis=-1) + ops.log1p(-tau[:, 0])

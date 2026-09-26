@@ -66,7 +66,11 @@ def _run_one(args, multiplier: int) -> tuple[int, Path]:
     env["OPENBLAS_NUM_THREADS"] = threads
 
     with log_path.open("w") as log:
-        log.write(f"KERAS_BACKEND={args.backend} " + " ".join(_command(args, multiplier)) + "\n\n")
+        log.write(
+            f"KERAS_BACKEND={args.backend} "
+            + " ".join(_command(args, multiplier))
+            + "\n\n"
+        )
         log.flush()
         completed = subprocess.run(
             _command(args, multiplier),
@@ -85,7 +89,9 @@ def main() -> None:
     parser.add_argument("--summary-multipliers", type=int, nargs="+", default=[1, 2, 4])
     parser.add_argument("--max-workers", type=int, default=3)
     parser.add_argument("--threads-per-worker", type=int, default=4)
-    parser.add_argument("--backend", choices=("tensorflow", "jax", "torch"), default="tensorflow")
+    parser.add_argument(
+        "--backend", choices=("tensorflow", "jax", "torch"), default="tensorflow"
+    )
     parser.add_argument("--epochs", type=int, default=defaults.epochs)
     parser.add_argument("--batch-size", type=int, default=defaults.batch_size)
     parser.add_argument("--num-batches", type=int, default=defaults.num_batches)
@@ -116,7 +122,9 @@ def main() -> None:
 
     if args.dry_run:
         for multiplier in args.summary_multipliers:
-            print(f"KERAS_BACKEND={args.backend} " + " ".join(_command(args, multiplier)))
+            print(
+                f"KERAS_BACKEND={args.backend} " + " ".join(_command(args, multiplier))
+            )
         return
 
     workers = min(args.max_workers, len(args.summary_multipliers))

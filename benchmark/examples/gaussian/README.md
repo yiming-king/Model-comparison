@@ -42,117 +42,62 @@ from their Keras configuration rather than inferred from their filenames:
 Thresholds are therefore specific to `summary_label × generating_model`; they
 are never shared across summary-space sizes.
 
-## Shared raw datasets for diagnostic references
+## Diagnostic references for indirect and direct methods
 
-For each candidate model M1–M4, indirect networks and all direct losses use
-the same saved raw datasets for diagnostic reference fitting, reference
-calibration, and density validation. These are three separate splits. Fit
-data estimate the reference mean/covariance, kernel reference, or density;
-calibration data determine the reference median and 5th–95th percentiles;
-validation data check the density fit. The validation split is also fixed and
-shared across methods. No method redraws these splits independently.
+Indirect networks retain model-specific summary spaces and reference distributions
+for M1–M4. Their existing raw reference bank has 2,000 datasets **per model**
+for each fit, calibration, and density-validation partition.
 
-The current D=20, N=10 bank is stored under
-`results/diagnostic_reference_datasets/20d_10n/seed_2025_fit_2000_calibration_2000_validation_2000/`.
-Each candidate has `{fit,calibration,validation}.npy`, with a shared
-`manifest.json` recording the bank identity. Each split contains 2,000 datasets
-per candidate. Raw dimensions, observation count, candidate model, split,
-sample counts, and seed identify the bank; summary dimension and direct loss
-do not. The shared entry point is
-`analysis.reference_datasets.ensure_reference_datasets()`.
+Each direct loss has one shared 12-dimensional summary network. Its diagnostic
+reference uses a balanced pool from M1–M4 in that network's summary space.
+The default `n_fit=2000`, `n_calibration=2000`, and
+`n_density_validation=2000` are **totals**: 500 datasets per model in each
+partition. One reference distribution and threshold are fitted per diagnostic
+(L2, Linf, density, Kernel MMD), yielding one score per test dataset. No
+indirect diagnostic score or model-specific surprise classification is reused.
+The pooled reference interval is the central 90%, with `rho = distance / high`
+and the typical interval `rho_low <= rho <= 1`.
 
-Every network embeds those shared observations using its own learned summary
-network and fits its own reference distributions in that space. Sharing raw
-inputs does not share embeddings, fitted densities, quantile bounds, or
-surprise labels. Derived diagnostic caches must correspond to both the raw
-bank and the network checkpoint. After changing the bank, recompute those
-caches before redrawing diagnostic figures.
-
-The separate approximation-error benchmark remains 120 raw datasets, 30 per
-candidate, in `calibration_outputs/20d_10n/datasets/`. It is used to calibrate
-approximation-error thresholds and is not an additional batch for the four
-summary diagnostics. The plotted OOD observations remain the existing 600
-datasets. This change does not retrain any inference network.
-
-## Direct model comparison and its own summary diagnostics
+## Direct PMP comparison and detection
 
 `notebooks/direct_cent.ipynb`, `direct_exp.ipynb`, and `direct_logistic.ipynb`
-train separate direct classifiers, each with a learned 12-dimensional summary.
-Their outputs live under `results/direct/direct_{cross_entropy,exponential,logistic}/`.
-`notebooks/pmp_direct_indirect_comparison.ipynb` reads these results and saves
-combined figures under `results/direct/direct_loss_comparison/figures/`.
-
-The comparison still reads observations and indirect S=4D logML from
-`results/ood_80d_10n/datasets/*_logml_pmp.pkl`. These files contain distinct
-indirect inference results and must be retained. Here `80d` denotes the indirect
-summary dimension; the observations have shape `(10, 20)`.
-
-Direct L2, Linf, Kernel, and density diagnostics use each loss's **own direct
-checkpoint embeddings**. The shared raw fit, calibration, and validation
-splits from M1–M4 are transformed by each classifier to fit four model-specific
-reference laws in that classifier's learned space. No indirect reference
-distributions or surprise labels are reused.
-Reference fitting and calibration each use 2,000 datasets per candidate model;
-density flows additionally use 2,000 validation datasets. The reference interval
-is the central 90%, and `rho = (distance - median) / (high - median)`.
-“All high surprise” means all four distances exceed their own upper reference
-bound; lower-tail values retain the existing interpolation convention.
+train separate direct classifiers. Their results are in
+`results/direct/direct_{cross_entropy,exponential,logistic}/`.
+`analysis/direct_diagnostics.py` loads each saved checkpoint and the same
+observations used by the indirect S=4D comparison (raw D=20, N=10). It pools
+freshly generated diagnostic reference data, embeds all datasets with the direct
+network, and saves `diagnostics/reference_pooled.pkl`,
+`diagnostics/diagnostic_frame.csv`, observed summaries, and provenance metadata.
+Reference fitting never retrains the classifier.
 
 ```bash
 KERAS_BACKEND=jax /opt/anaconda3/envs/benchmark2/bin/python \
   -m benchmark.examples.gaussian.analysis.direct_diagnostics
 ```
 
-The comparison notebook calls the same cache-aware entry point before reading
-PMP tables. Checkpoint, input, implementation, and reference-setting fingerprints
-prevent stale diagnostics after retraining; refreshed PMPs come from the same
-checkpoint as the diagnostics. This only fits diagnostic density models and
-does not retrain the direct classifier. Outputs include a long diagnostic CSV,
-reference caches, observed embeddings, and provenance metadata per loss.
-
-Direct PMP **error** thresholds are separate from these summary-space diagnostic
-intervals. `analysis/direct_calibration.py` evaluates each saved direct classifier
-on the exact existing `calibration_outputs/20d_10n/datasets/{m1,m2,m3,m4}/x.npy`
-benchmark (30 datasets per generator). It recomputes analytical PMP from those
-observations and calibrates `direct PMP - analytical PMP`. Following the indirect
-protocol, each generating model pools all four PMP components (120 values) and
-uses the linear-interpolated 5th and 95th percentiles. Thus plot row Mj uses the
-error interval calibrated on generator Mj, pooling its four components; it is
-not a component-j-only error interval.
+The separate direct PMP calibration in `analysis/direct_calibration.py`
+uses 100 datasets per generator in
+`calibration_outputs/datasets/{m1,m2,m3,m4}/x.npy` and the gold PMP
+vectors saved by the indirect calibration. Each direct network evaluates the
+same 400 datasets and calibrates a separate central 90% signed PMP error
+interval for each of the four candidate models, using 400 errors per interval.
+A dataset has high PMP error when any candidate's signed error is outside its
+interval. The four intervals
+are saved in `thresholds.csv` and read by the comparison notebook. A
+diagnostic flags high surprise at `rho > 1`. Its saved detection table reports
+TP/FP/TN/FN, FNR, FPR, and ROC AUC. Each direct network has a 4×4 plot: rows
+are candidate models and columns are diagnostics. Green shading marks the
+direct typical set, and horizontal lines mark each candidate's signed 90%
+PMP error bounds. The separate
+detection table uses the signed intervals.
 
 ```bash
 KERAS_BACKEND=jax /opt/anaconda3/envs/benchmark2/bin/python \
   -m benchmark.examples.gaussian.analysis.direct_calibration
 ```
 
-Each loss saves `calibration/{thresholds,per_dataset_metrics,per_dataset_results}.csv`
-and `calibration/metadata.json` below its own `results/direct/direct_<loss>/`.
-The comparison notebook checks these caches and matches the green background
-style of `summary_dimension_comparison_M1_M4_4x4.ipynb` (`#DCEEDC`, alpha 0.70).
-The diagnostic background spans from the smallest loss-specific `rho_low`
-(using its median across datasets) to `rho = 1`: it is the envelope of the
-three reference intervals, not a region jointly normal under all three losses.
-The horizontal PMP-error background shows the intersection of the three loss
-intervals, `[max(low), min(high)]`. If they do not overlap, it shows their
-envelope `[min(low), max(high)]` with alpha 0.25 instead. Loss-specific horizontal
-threshold lines retain their colors, and the vertical `rho = 1` line marks the
-upper diagnostic reference boundary.
-The three direct classifiers do not produce parameter posteriors or absolute
-logML, so posterior-MMD and logML-error thresholds remain properties of the
-corresponding indirect estimators. Summary-space Kernel MMD is a different quantity
-from posterior-sample MMD.
-
-The reused historical benchmark has a known overlap: all 30 M1 observations
-exactly match OOD M1 IDs 0–29; the M2–M4 benchmark observations do not overlap
-the plotted 600 OOD datasets. Reuse preserves the original indirect comparison
-protocol, but the M1 error interval is not independent of those plotted samples.
-
-The redundant 12 L2 `*_processed_80d_10n.pkl` caches were removed after checking
-that their inference fields match retained `*_logml_pmp.pkl` and their diagnostic
-values match retained CSVs. The `*_processed_80d_10n_linf.pkl` caches are retained:
-they contain a different historical inference run, including posterior draws.
-
-Run commands from the repository root with the `benchmark2` environment.
+These direct classifiers provide PMP only. Posterior-MMD and logML-error
+thresholds belong to the corresponding indirect estimators.
 
 ## 1. Generate calibration data and thresholds
 
@@ -163,18 +108,21 @@ The complete command discovers and runs all available `S=1D`, `S=2D`, and
 /opt/anaconda3/envs/benchmark2/bin/python -m benchmark.examples.gaussian.calibration.pipeline all \
   --num-dims 20 \
   --num-obs 10 \
-  --num-datasets 30 \
+  --num-datasets 100 \
   --num-posterior-samples 1000 \
   --quantile 0.95 \
   --signed-error-coverage 0.90 \
-  --seed 2025
+  --seed 2025 \
+  --overwrite-datasets
 ```
 
 It generates one independent well-specified dataset bank, then evaluates every
 summary configuration against it. Each configuration has its own NPE posterior,
 NPE logML, and PMP thresholds: posterior MMD uses `[0, q95]`, while signed
-logML/PMP errors use the central 90% interval `[q5, q95]`. The stages can also
-be run separately:
+logML/PMP errors use the central 90% interval `[q5, q95]`. Each summary
+configuration and generating model contributes 100 matching-model values to
+each of the posterior MMD, logML, and PMP thresholds. The stages can also be
+run separately:
 
 ```bash
 # New, independent, well-specified m1--m4 datasets
@@ -188,7 +136,10 @@ be run separately:
 ```
 
 Existing calibration datasets are reused unless `--overwrite-datasets` is
-specified. The summary-independent analytical posterior draws are saved once,
+specified. The flag is required when replacing the saved 30-dataset bank with
+100 datasets per generator. Rerun all stages so metrics, thresholds, and gold
+PMP vectors correspond to the new observations before direct PMP calibration.
+The summary-independent analytical posterior draws are saved once,
 while matching-model NPE posterior draws are stored under their summary
 configuration. Pass `--no-save-posterior-draws` to omit both kinds of draws.
 
@@ -205,7 +156,7 @@ To run only selected summary dimensions, use e.g.
 Outputs are written below:
 
 ```text
-benchmark/examples/gaussian/calibration_outputs/20d_10n/
+benchmark/examples/gaussian/calibration_outputs/
 ├── datasets/{m1,m2,m3,m4}/
 ├── analytical/posterior_draws/{m1,m2,m3,m4}/
 ├── metrics/
@@ -221,11 +172,12 @@ benchmark/examples/gaussian/calibration_outputs/20d_10n/
 └── per_dataset_results.csv
 ```
 
-The default 30 datasets per generating model matches the diffusion calibration. Because
-the Gaussian analytical reference is inexpensive, use e.g. `--num-datasets 200`
+The default is 100 datasets per generating model. Use e.g. `--num-datasets 200`
 when a more stable empirical 95th percentile is preferred. Dataset count,
 posterior sample count, and logML method are part of the threshold grouping and
 must match the intended analysis.
+The raw D=20, N=10 calibration lives directly in `calibration_outputs/`;
+other raw configurations retain their own subdirectories.
 
 ## 2. Compute OOD posterior, logML, PMP, and direct PMP
 

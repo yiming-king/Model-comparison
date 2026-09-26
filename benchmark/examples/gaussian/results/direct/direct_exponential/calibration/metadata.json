@@ -1,23 +1,27 @@
 {
-  "created_at_utc": "2026-09-21T20:54:13.915390+00:00",
+  "created_at_utc": "2026-09-25T10:20:23.412422+00:00",
   "identity": {
-    "schema_version": 1,
+    "schema_version": 3,
     "loss_function": "exponential",
     "checkpoint": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/gaussian/networks/direct_exponential.keras",
     "checkpoint_sha256": "89e9b9f170a257f478d0be8bb20e797f184a9e33516249f340ab7ed6cfe4ecdc",
     "summary_dim": 12,
     "data_dim": 20,
     "num_obs": 10,
-    "benchmark_directory": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/gaussian/calibration_outputs/20d_10n",
+    "benchmark_directory": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/gaussian/calibration_outputs",
+    "indirect_gold_metrics": "/Users/yimingzang/Documents/Project/benchmark2/benchmark/examples/gaussian/calibration_outputs/per_dataset_metrics.csv",
+    "indirect_gold_sha256": "0f076bd35eda27e1835ea6b9506f2d0ca7cee45cbef7fb4e0eba31bf366c1b79",
+    "calibration_helper_sha256": "785caa6b8da5b742a5a9579ac31b0983a0df8a22d7e9d71ca066bc54ad272d01",
+    "expected_per_model": 100,
     "benchmark_sha256": {
-      "datasets/m1/x.npy": "0a38b1063d13ca64426b95d735c786c4596f0eae7de3dfb540ed79f2e1772f36",
-      "datasets/m1/manifest.csv": "af2031eb14bdcc8e1bd50c421fa4f1ed067f017a048d3a5104788837e8467dd3",
-      "datasets/m2/x.npy": "f068a062c1f1a60ef7ddc336884fb645f929ad23baf49fc0cd44dbfa3e7d8aa4",
-      "datasets/m2/manifest.csv": "a3a460379d3bb1c57a61b9bce2282c75875f3b36d2b632133c924a9b44cc9d5d",
-      "datasets/m3/x.npy": "ce2cb13ed1dc7210f2490915b9a4a038f2054cc0352368109d3b188d5db7563e",
-      "datasets/m3/manifest.csv": "70a6ae2634f2242497ca866117946d10218516eb7e487678e85e772202b05ced",
-      "datasets/m4/x.npy": "7cff50dc3bf059bf1db99f93ec157d7361cc6cb386be7dff870a3de2d2818ec1",
-      "datasets/m4/manifest.csv": "cbc794d7ed279d30fe618ed1f6769337392af97cc90ab66e946531a8e7b6fb1e"
+      "datasets/m1/x.npy": "ea3d23f689ab335e6ef35a29917a69891e47231ee3cceb4825ae3e9571850fe4",
+      "datasets/m1/manifest.csv": "2623ecac34b65d1d9b588652635358a4fae140c1607a7a01a3414061db69a5f9",
+      "datasets/m2/x.npy": "fa64ca86b7707f6dc0dff04b49d7c1e9bf4365df48e1c1d09bd733f544456fc1",
+      "datasets/m2/manifest.csv": "380e0187f0db78fb6829abc43ef7a18fefccfd5e4ad047729416de7803dd3dd6",
+      "datasets/m3/x.npy": "26473065288408f1bc0f1b8f7fc6c5aec41418a80c6e89f687f0ba0ce1400cda",
+      "datasets/m3/manifest.csv": "bea8f228dcd41e3783253be5a2c29f034ba66f5aec63651927ff78080be945ee",
+      "datasets/m4/x.npy": "54932bb5528ecacdf4be2d67df025b85a14fbc756090968b8be630ba63996e50",
+      "datasets/m4/manifest.csv": "05bf946c3861f34586f71f2850a17671a7b260dcc4c343be36fb069e75395e2f"
     },
     "model_specs": {
       "m1": {
@@ -54,35 +58,28 @@
       0.25
     ],
     "signed_error_coverage": 0.9,
-    "implementation_sha256": "4bf1860901c6148a9f26bc2461ac0f53d787c1b66795e8f8db18dabc748f7302",
-    "analytical_implementation_sha256": "87e0232076f521a6b114ee44652ee6b05a0775cb199c88f142af40c2083f3386",
-    "inference_helper_sha256": "e2cd299f9c97259284f1f9f8770a6663389407ab57baa913aad7db58decd52d9"
+    "implementation_sha256": "233eb4425627d1a85de7660f3f53143ecfe000d8a58b3df9bf5cc2680a6185bb",
+    "analytical_implementation_sha256": "3aa3a1ed4bf5a6c22d7d0feb119f3d3469dcc3d1833e0271f7d7e8e61a17355e",
+    "inference_helper_sha256": "ee59e02fa73cbc75a3d0c929ff68a50559bb79077c2876372237cf682bb0c606"
   },
   "output_sha256": {
-    "thresholds": "c36e2a74ef725d631c3f008bda1ed9945b29e3a11063de36a664c9a33a060c28",
-    "per_dataset_metrics": "5ffb3e1cd788f0273e4a31178819a14ab584013183a6c71a43cce7ac6a32b332",
-    "per_dataset_results": "6485fe76c4d4086ad8c7755cf1bc66c9b6a194b5d86271920781c6b4c543ef27"
+    "thresholds": "70e0ba221f36d538c3d1a94916d789f3a7f02006a1796d4ce29648af1e5b94a5",
+    "per_dataset_metrics": "3e3457c3c6c2c0d4647a6d9a405e2866e89839fcfca6cf525d27b7e876007260",
+    "per_dataset_results": "9d720b9b19d6f65936a5ebcaa1ab38aafd00a3edae9150d5464c078dc073a829"
   },
-  "num_datasets": 120,
+  "num_datasets": 400,
   "datasets_per_generating_model": {
-    "m1": 30,
-    "m2": 30,
-    "m3": 30,
-    "m4": 30
+    "m1": 100,
+    "m2": 100,
+    "m3": 100,
+    "m4": 100
   },
   "dataset_policy": "exact saved indirect benchmark observations reused without regeneration",
-  "gold_standard": "analytical marginal likelihoods with equal model prior",
-  "aggregation": "per generating model, pool all four signed PMP components; central 90% by default",
+  "gold_standard": "indirect calibration's saved analytical PMP vector",
+  "aggregation": "one signed PMP error interval per candidate model across all saved datasets",
   "not_applicable": [
     "posterior_mmd",
     "signed_logml_error"
   ],
-  "not_applicable_reason": "ModelComparisonApproximator outputs model probabilities, not parameter posteriors or absolute marginal likelihoods",
-  "cache_migrations": [
-    {
-      "migrated_at_utc": "2026-09-21T22:42:51.415046+00:00",
-      "reason": "Diagnostic reference sharing changed; all calibration-imported helper ASTs and metric CSV hashes are unchanged.",
-      "previous_inference_helper_sha256": "ebef32acdcd009f1ec81b155b8c3f94c8672796c38be0149b04134abd41af018"
-    }
-  ]
+  "not_applicable_reason": "ModelComparisonApproximator outputs model probabilities, not parameter posteriors or absolute marginal likelihoods"
 }

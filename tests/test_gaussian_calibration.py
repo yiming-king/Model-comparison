@@ -3,7 +3,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from benchmark.examples.gaussian.config import NetworkSet, discover_network_sets
+from benchmark.examples.gaussian.config import (
+    NetworkSet,
+    calibration_output_dir,
+    discover_network_sets,
+)
 from benchmark.examples.gaussian.calibration.pipeline import CalibrationPaths
 from benchmark.examples.gaussian.calibration.thresholds import (
     add_thresholds_to_metrics,
@@ -25,6 +29,8 @@ from benchmark.examples.gaussian.analysis.pipeline import (
     load_cached_inference_results,
     load_cached_metric_frames,
 )
+
+
 def _calibration_frame() -> pd.DataFrame:
     rows = []
     for dataset_id in range(3):
@@ -57,12 +63,17 @@ def _calibration_frame() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def test_thresholds_use_matching_posterior_and_logml_but_pool_pmp_components():
+def test_primary_calibration_has_no_configuration_wrapper(tmp_path):
+    assert calibration_output_dir("20d_10n", tmp_path) == tmp_path
+    assert calibration_output_dir("20d_100n", tmp_path) == tmp_path / "20d_100n"
+
+
+def test_thresholds_use_matching_model_component_for_each_metric():
     thresholds = calculate_thresholds(_calibration_frame()).set_index("metric")
 
     assert thresholds.loc["posterior_mmd", "n_values"] == 3
     assert thresholds.loc["signed_logml_error", "n_values"] == 3
-    assert thresholds.loc["signed_pmp_error", "n_values"] == 12
+    assert thresholds.loc["signed_pmp_error", "n_values"] == 3
     assert thresholds.loc["posterior_mmd", "median"] == 0.2
     assert thresholds.loc["signed_logml_error", "median"] == 0.0
     assert thresholds.loc["posterior_mmd", "quantile"] == 0.95
@@ -78,7 +89,7 @@ def test_thresholds_use_matching_posterior_and_logml_but_pool_pmp_components():
     )
     np.testing.assert_allclose(
         thresholds.loc["signed_pmp_error", "threshold"],
-        np.quantile(np.arange(1, 13) / 100.0, 0.95, method="linear"),
+        np.quantile([0.01, 0.05, 0.09], 0.95, method="linear"),
     )
     np.testing.assert_allclose(
         thresholds.loc["signed_logml_error", "lower_threshold"],
@@ -97,7 +108,7 @@ def test_thresholds_use_all_values_without_importance_ess_fields():
 
     assert thresholds.loc["posterior_mmd", "n_values"] == 3
     assert thresholds.loc["signed_logml_error", "n_values"] == 3
-    assert thresholds.loc["signed_pmp_error", "n_values"] == 12
+    assert thresholds.loc["signed_pmp_error", "n_values"] == 3
     assert not any("ess" in column.lower() for column in thresholds.columns)
 
 
@@ -170,9 +181,7 @@ def test_posterior_mmd_normalization_scales_by_q95():
             "posterior_mmd": [0.2, 0.5, 0.8],
         }
     )
-    logml = pd.DataFrame(
-        {"assumed_model": ["m1"], "signed_logml_error": [0.0]}
-    )
+    logml = pd.DataFrame({"assumed_model": ["m1"], "signed_logml_error": [0.0]})
     pmp = pd.DataFrame(
         {
             **{
@@ -190,12 +199,8 @@ def test_posterior_mmd_normalization_scales_by_q95():
     np.testing.assert_allclose(
         normalized["normalized_posterior_mmd"], [0.25, 0.625, 1.0]
     )
-    np.testing.assert_allclose(
-        normalized["normalized_posterior_mmd_low"], [0.0] * 3
-    )
-    np.testing.assert_allclose(
-        normalized["normalized_posterior_mmd_high"], [1.0] * 3
-    )
+    np.testing.assert_allclose(normalized["normalized_posterior_mmd_low"], [0.0] * 3)
+    np.testing.assert_allclose(normalized["normalized_posterior_mmd_high"], [1.0] * 3)
     np.testing.assert_allclose(normalized_logml["normalized_logml_error_low"], [-1.0])
     np.testing.assert_allclose(normalized_logml["normalized_logml_error_high"], [2.0])
     for model in ("m1", "m2", "m3", "m4"):

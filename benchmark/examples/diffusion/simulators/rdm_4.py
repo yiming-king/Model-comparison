@@ -21,26 +21,38 @@ class RDM(bf.simulators.Simulator):
     @allow_batch_size
     def sample(self, batch_shape: Shape, **kwargs) -> dict[str, np.ndarray]:
         parameters = self.prior(batch_shape)
-        observables = self.likelihood(batch_shape, **self._constrain_parameters(**parameters))
+        observables = self.likelihood(
+            batch_shape, **self._constrain_parameters(**parameters)
+        )
         return parameters | observables if self.keep_params else observables
 
     @allow_batch_size
     def prior(self, batch_shape: Shape) -> dict[str, np.ndarray]:
         return {
-            "alpha": np.random.normal(0.0, 0.5, size=batch_shape + (N_ALPHA[self.model],)),
+            "alpha": np.random.normal(
+                0.0, 0.5, size=batch_shape + (N_ALPHA[self.model],)
+            ),
             "nu": np.random.normal(0.0, 0.5, size=batch_shape + (2,)),
             "tau": np.random.normal(0.0, 1.0, size=batch_shape + (1,)),
         }
 
     @staticmethod
-    def _constrain_parameters(alpha: np.ndarray, nu: np.ndarray, tau: np.ndarray) -> dict[str, np.ndarray]:
+    def _constrain_parameters(
+        alpha: np.ndarray, nu: np.ndarray, tau: np.ndarray
+    ) -> dict[str, np.ndarray]:
         return {"alpha": np.exp(alpha), "nu": np.exp(nu), "tau": expit(tau)}
 
     @allow_batch_size
-    def likelihood(self, batch_shape: Shape, alpha: np.ndarray, nu: np.ndarray, tau: np.ndarray) -> dict[str, np.ndarray]:
+    def likelihood(
+        self, batch_shape: Shape, alpha: np.ndarray, nu: np.ndarray, tau: np.ndarray
+    ) -> dict[str, np.ndarray]:
         conditions = wagenmakers.conditions.reshape((1,) * len(batch_shape) + (-1,))
         conditions = np.broadcast_to(conditions, batch_shape + (conditions.shape[-1],))
-        rt = self.rdm_rng(alpha=self._alpha_by_trial(alpha, conditions), nu=np.expand_dims(nu, axis=1), tau=tau)
+        rt = self.rdm_rng(
+            alpha=self._alpha_by_trial(alpha, conditions),
+            nu=np.expand_dims(nu, axis=1),
+            tau=tau,
+        )
         return {"rt": rt, "conditions": conditions}
 
     def _alpha_by_trial(self, alpha: np.ndarray, conditions: np.ndarray) -> np.ndarray:
@@ -49,7 +61,9 @@ class RDM(bf.simulators.Simulator):
             return np.repeat(pair, conditions.shape[-1], axis=-2)
 
         if self.model == "m1":
-            selected = np.where(conditions.astype(bool), alpha[..., 1, None], alpha[..., 0, None])
+            selected = np.where(
+                conditions.astype(bool), alpha[..., 1, None], alpha[..., 0, None]
+            )
             return np.repeat(selected[..., None], 2, axis=-1)
 
         if self.model == "m2":
@@ -78,8 +92,12 @@ class RDM(bf.simulators.Simulator):
         lam = np.square(alpha)
         zeta_sq = np.square(np.random.standard_normal(size=mu.shape))
 
-        x = mu + (mu_sq * zeta_sq) / (2.0 * lam) - mu / (2.0 * lam) * np.sqrt(
-            4.0 * mu * lam * zeta_sq + mu_sq * np.square(zeta_sq)
+        x = (
+            mu
+            + (mu_sq * zeta_sq) / (2.0 * lam)
+            - mu
+            / (2.0 * lam)
+            * np.sqrt(4.0 * mu * lam * zeta_sq + mu_sq * np.square(zeta_sq))
         )
         z = np.random.uniform(size=mu.shape)
         return np.where(z <= mu / (mu + x), x, mu_sq / x)
@@ -87,7 +105,9 @@ class RDM(bf.simulators.Simulator):
 
 SIMULATORS = {model: RDM(model=model) for model in MODELS}
 SIMULATORS_NO_PARAMS = {model: RDM(model=model, keep_params=False) for model in MODELS}
-rdm_model_comparison = bf.simulators.ModelComparisonSimulator(list(SIMULATORS_NO_PARAMS.values()))
+rdm_model_comparison = bf.simulators.ModelComparisonSimulator(
+    list(SIMULATORS_NO_PARAMS.values())
+)
 
 rdm_m0 = SIMULATORS["m0"]
 rdm_m1 = SIMULATORS["m1"]
